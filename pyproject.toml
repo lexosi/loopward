@@ -29,6 +29,7 @@ dev = [
 
 [project.scripts]
 guardloop = "guardloop.cli:main"
+guardloop-demo = "guardloop.demo:console"
 
 [project.urls]
 Homepage = "https://github.com/lexosi/guardloop"

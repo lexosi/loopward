@@ -35,8 +35,8 @@ both under anti-loop + stop-gate + audit.
 ## Quickstart (no API key)
 
 ```bash
-pip install -e .[dev]
-python demo/run_demo.py
+pip install -e .
+guardloop-demo
 ```
 
 You'll watch the reviewer's first strategy fail to produce parseable findings
@@ -102,10 +102,7 @@ is injected, so the whole flow is testable offline.
 
 ## Demo
 
-<!-- TODO: add a terminal GIF of `python demo/run_demo.py` here.
-     Record with e.g. asciinema/termtosvg and drop the asset in docs/. -->
-
-_GIF placeholder — record `python demo/run_demo.py` and embed it here._
+![guardloop demo — anti-loop class-jump, stop-gate, audit trail](docs/demo.gif)
 
 ## Tests
 

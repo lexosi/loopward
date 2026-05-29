@@ -21,3 +21,7 @@ htmlcov/
 
 # guardloop run outputs (audit trails are per-run, not committed)
 runs/
+
+# demo recording intermediates (docs/demo.gif IS committed)
+demo.mp4
+palette.png
