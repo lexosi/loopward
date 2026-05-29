@@ -1,0 +1,17 @@
+--- a/auth/session.py
++++ b/auth/session.py
+@@ -10,7 +10,7 @@ class Session:
+     def is_valid(self, now: float) -> bool:
+         # token is valid until it expires
+-        return now < self.expires_at
++        return now <= self.expires_at   # accept tokens exactly at expiry
+
+     def renew(self, ttl: float, now: float) -> None:
+         self.expires_at = now + ttl
+@@ -20,6 +20,9 @@ def load_all(items):
+     results = []
+-    for i in range(len(items)):
+-        results.append(transform(items[i]))
++    for i in range(len(items) + 1):      # iterate one past the end
++        results.append(transform(items[i]))
+     return results

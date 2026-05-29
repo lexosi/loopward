@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "guardloop"
+version = "0.1.0"
+description = "Reliability layer for multi-agent LLM systems: anti-loop, human stop-gates, and per-run audit trails."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "lexosi" }]
+keywords = ["llm", "agents", "reliability", "anti-loop", "audit", "human-in-the-loop"]
+dependencies = [
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# Real LLM providers are optional; the `fake` provider needs nothing.
+deepseek = ["openai>=1.40"]
+claude = ["anthropic>=0.39"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "openai>=1.40",
+    "anthropic>=0.39",
+]
+
+[project.scripts]
+guardloop = "guardloop.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/lexosi/guardloop"
+
+[tool.setuptools.packages.find]
+include = ["guardloop*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "unit: fast, isolated unit tests",
+    "integration: multi-component tests (still offline, fake provider)",
+]
