@@ -107,9 +107,13 @@ def main(argv: list[str] | None = None, *, default_delay: float = 0.0) -> int:
 
     line(f"\n--- audit trail written to: {result.run_dir} ---")
 
-    # Sanity: the structured-strategy output must parse.
+    # Sanity: the structured-strategy output must parse (explicit raise so this
+    # holds even under `python -O`, which strips `assert`).
     _strict = [{"role": "system", "content": "strict code reviewer"}]
-    assert parse_findings(scripted_reviewer(_strict))
+    if not parse_findings(scripted_reviewer(_strict)):
+        raise RuntimeError(
+            "demo self-check failed: structured strategy produced no parseable findings"
+        )
     return 0 if result.status == "ok" else 1
 
 
