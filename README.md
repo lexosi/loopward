@@ -2,7 +2,8 @@
 
 **A reliability layer for multi-agent LLM systems.** Most agent frameworks give
 you *capability* — more tools, more autonomy. `guardloop` gives you the thing
-that makes autonomy safe to ship: **reliability**. Anti-loop. Human stop-gates.
+that makes autonomy safe to ship: **reliability**, enforced structurally rather
+than by convention. Anti-loop. Human stop-gates.
 A full audit trail of every decision and every dollar.
 
 > Runs **offline with zero API keys** out of the box (a deterministic `fake`
@@ -31,6 +32,30 @@ Turn an LLM loose on a task and three failure modes show up fast:
 The demo task is **automated code review**: a Reviewer agent finds issues, a
 Verifier agent re-checks them (probe before you trust), and the orchestrator runs
 both under anti-loop + stop-gate + audit.
+
+### Enforced structurally, not by convention
+
+The stop-gate is an **object-capability**. `Verifier.verify(findings, approval)`
+requires an `Approval`, and genuineness is checked by **identity membership** in
+a private registry that **only `StopGate.request()` populates** (on APPROVE) —
+not by `isinstance`. So every forgery path is closed within the threat model:
+
+- calling `verify()` with no approval → `TypeError` (missing argument);
+- a hand-built `Approval(...)`, a **subclass**, or an `object.__new__(Approval)`
+  instance → rejected (not in the registry / subclassing raises);
+- minting a valid `Approval` would require reaching into module-private state,
+  which is out of scope — as it is for any capability.
+
+The anti-loop's **hard bound is the orchestrator's bounded loop** (it advances
+strategies a finite number of times and terminates in `EXHAUSTED`, never spins).
+On top of that, the `AttemptOutcome` verdict is a matching tamper-evident token
+that only `AttemptTracker.record_failure()` mints.
+
+The supported entry point is `guardloop.Orchestrator`; the raw agents are not part
+of the public API. [`tests/test_no_evasion.py`](tests/test_no_evasion.py) is the
+proof — it re-runs the forgery attempts (subclass, `object.__new__`, hand-built,
+missing) and asserts each is rejected, and that only a real gate-minted approval
+proceeds.
 
 ## Quickstart (no API key)
 
@@ -108,6 +133,7 @@ is injected, so the whole flow is testable offline.
 
 ```bash
 pytest                 # all green, offline, no secrets
+pytest tests/test_no_evasion.py   # the gate cannot be bypassed (structural proof)
 ruff check .
 ```
 

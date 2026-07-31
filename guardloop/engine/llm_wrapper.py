@@ -25,6 +25,8 @@ Message = dict[str, str]  # {"role": "system"|"user"|"assistant", "content": "..
 
 # USD per 1M tokens, cache-miss rates. Unknown (provider, model) pairs cost 0
 # and emit no charge — keeps the fake provider free and avoids guessing.
+# Prices are published rates and drift over time; last verified 2026-07-31.
+# Re-check the providers' pricing pages before relying on the cost figures.
 PRICING: dict[tuple[str, str], dict[str, float]] = {
     ("deepseek", "deepseek-v4-flash"): {"prompt": 0.14, "completion": 0.28},
     ("deepseek", "deepseek-v4-pro"): {"prompt": 0.435, "completion": 0.87},
