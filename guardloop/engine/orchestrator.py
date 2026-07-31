@@ -90,7 +90,7 @@ class Orchestrator:
             return RunResult(STATUS_GATE_DENIED, findings, None, str(run_dir), summary)
 
         self._audit.record("phase", "verify: start")
-        verify = self._verifier.verify(findings)
+        verify = self._verifier.verify(findings, decision.approval)
         self._audit.record(
             "phase",
             f"verify: confirmed {len(verify.confirmed)}, rejected {len(verify.rejected)}",

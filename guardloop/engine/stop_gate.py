@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from weakref import WeakSet
 
 GATE_INTERACTIVE = "interactive"
 GATE_AUTO = "auto"
@@ -25,9 +26,70 @@ GateMode = str  # one of the GATE_* constants
 APPROVE = "approve"
 DENY = "deny"
 
+_MINT = object()  # module-private token; only this module can mint an Approval
+_MINTED: WeakSet[Approval] = WeakSet()  # identity registry of genuine Approvals
+
 AuditSink = Callable[[str, str], None]
 # Prompt function: (phase, summary) -> "y"/"n" answer. Injectable for tests.
 Prompter = Callable[[str, str], str]
+
+
+class Approval:
+    """Unforgeable capability token proving a stop-gate APPROVED a phase.
+
+    Only :meth:`StopGate.request` mints one (via :func:`_mint_approval`, which
+    holds the module-private ``_MINT`` sentinel and records the instance in the
+    ``_MINTED`` identity registry). Genuineness is checked by *identity
+    membership* (:func:`is_genuine_approval`), not ``isinstance`` — so a subclass
+    or an ``object.__new__(Approval)`` forgery is rejected: it is not in the
+    registry. Forging one requires reaching into module-private state, which is
+    out of scope (as with any capability).
+
+    Note: genuineness is checked by *identity*, not field value. ``__setattr__``
+    blocks casual mutation, but a caller with direct ``object.__setattr__`` access
+    could still mutate ``phase`` in place — that is outside the guarantee and
+    harmless, since ``phase`` feeds no security decision (it is a label used only
+    in ``__repr__``); the identity-registry check is unaffected.
+    """
+
+    __slots__ = ("phase", "__weakref__")
+
+    def __init__(self, phase: str, *, _mint: object) -> None:
+        if _mint is not _MINT:
+            raise PermissionError(
+                "Approval cannot be constructed directly; obtain one from "
+                "StopGate.request() (it is a capability token, not a plain value)."
+            )
+        object.__setattr__(self, "phase", phase)
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        raise TypeError("Approval cannot be subclassed (it is a capability token).")
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("Approval is immutable")
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return f"Approval(phase={self.phase!r})"
+
+
+def _mint_approval(phase: str) -> Approval:
+    """Mint a genuine Approval and record it in the identity registry."""
+    approval = Approval(phase, _mint=_MINT)
+    _MINTED.add(approval)
+    return approval
+
+
+def is_genuine_approval(approval: object) -> bool:
+    """True only for an Approval instance minted by StopGate.request().
+
+    Identity membership in ``_MINTED`` — not ``isinstance`` — so forgeries
+    (subclass instances, ``object.__new__`` instances) are rejected. Non-
+    weakref-able / unhashable inputs (e.g. ``None``) return False cleanly.
+    """
+    try:
+        return approval in _MINTED
+    except TypeError:
+        return False
 
 
 @dataclass(frozen=True)
@@ -38,6 +100,7 @@ class Decision:
     verdict: str  # APPROVE | DENY
     mode: GateMode
     reason: str
+    approval: Approval | None = None
 
     @property
     def approved(self) -> bool:
@@ -79,13 +142,19 @@ class StopGate:
     def request(self, phase: str, summary: str) -> Decision:
         """Ask for approval to proceed into ``phase``."""
         if self.mode == GATE_AUTO:
-            decision = Decision(phase, APPROVE, self.mode, "auto-approved")
+            decision = Decision(
+                phase, APPROVE, self.mode, "auto-approved",
+                approval=_mint_approval(phase),
+            )
         elif self.mode == GATE_DENY:
             decision = Decision(phase, DENY, self.mode, "deny mode")
         else:
             answer = self._prompter(phase, summary)
             if answer in ("y", "yes"):
-                decision = Decision(phase, APPROVE, self.mode, "human approved")
+                decision = Decision(
+                    phase, APPROVE, self.mode, "human approved",
+                    approval=_mint_approval(phase),
+                )
             else:
                 decision = Decision(phase, DENY, self.mode, f"human declined ({answer!r})")
 

@@ -6,14 +6,18 @@
 Agents never call each other; the orchestrator coordinates them.
 """
 
-from guardloop.agents.reviewer import Finding, Reviewer, ReviewParseError, parse_findings
-from guardloop.agents.verifier import Verifier, VerifyResult
+from guardloop.agents.reviewer import Finding, ReviewParseError, parse_findings
+from guardloop.agents.verifier import VerifyResult
 
+# NOTE: Reviewer and Verifier are intentionally NOT re-exported here. They are
+# internal workers driven only by Orchestrator.run(); calling them directly
+# bypasses the anti-loop/stop-gate coordination. The structural guards still
+# hold if someone imports them from their submodules anyway (Verifier.verify
+# requires a real Approval token minted by StopGate), but the supported public
+# API is guardloop.Orchestrator.
 __all__ = [
     "Finding",
     "ReviewParseError",
-    "Reviewer",
     "parse_findings",
     "VerifyResult",
-    "Verifier",
 ]

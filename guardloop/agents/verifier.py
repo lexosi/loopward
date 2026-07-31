@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from guardloop.agents.reviewer import Finding
 from guardloop.engine.llm_wrapper import LLMClient, Message
+from guardloop.engine.stop_gate import Approval, is_genuine_approval
 
 # Marker the fake provider can recognise to behave like a verifier offline.
 VERIFY_MARKER = "Confirm or reject each finding"
@@ -54,8 +55,20 @@ class Verifier:
             {"role": "user", "content": listing},
         ]
 
-    def verify(self, findings: list[Finding]) -> VerifyResult:
-        """Confirm/reject findings. Empty input yields an empty result."""
+    def verify(self, findings: list[Finding], approval: Approval) -> VerifyResult:
+        """Confirm/reject findings. Requires a valid stop-gate Approval.
+
+        ``approval`` must be an :class:`Approval` minted by
+        ``StopGate.request()`` (APPROVE). This makes the stop-gate structural:
+        you cannot reach verification without a real approval — calling
+        ``verify(findings)`` is a ``TypeError`` (missing arg) and passing a
+        forged token is rejected below.
+        """
+        if not is_genuine_approval(approval):
+            raise TypeError(
+                "verify() requires a genuine Approval minted by StopGate.request(); "
+                "a missing, forged, or subclassed token is rejected"
+            )
         if not findings:
             return VerifyResult()
         resp = self._llm.complete(self.build_messages(findings))

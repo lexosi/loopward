@@ -23,26 +23,47 @@ and reason about; the tracker only owns the per-subtask counters.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from weakref import WeakSet
 
 MAX_ATTEMPTS = 3
 
 RETRY = "retry"
 CLASS_JUMP = "class_jump"
 
+_MINT = object()  # module-private token; only this module can mint an AttemptOutcome
+_MINTED: WeakSet[AttemptOutcome] = WeakSet()  # identity registry of genuine outcomes
+
 # Optional sink for structured events, e.g. AuditLog.record.
 AuditSink = Callable[[str, str], None]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class AttemptOutcome:
-    """Immutable verdict for one recorded failure."""
+    """Immutable, unforgeable verdict for one recorded failure.
+
+    Only :meth:`AttemptTracker.record_failure` can mint one. A hand-built
+    ``AttemptOutcome(...)`` raises — so a caller cannot fabricate a
+    ``class-jump granted`` verdict to drive a hand-rolled loop past the
+    anti-loop rule. That is the structural half of the anti-loop guarantee.
+    """
 
     subtask_id: str
     attempt: int
     action: str  # RETRY | CLASS_JUMP
     strategy: str
     message: str
+    _mint: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._mint is not _MINT:
+            raise PermissionError(
+                "AttemptOutcome cannot be constructed directly; obtain one from "
+                "AttemptTracker.record_failure() (it is a capability token)."
+            )
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        raise TypeError("AttemptOutcome cannot be subclassed (it is a capability token).")
 
     @property
     def must_class_jump(self) -> bool:
@@ -56,6 +77,35 @@ def decide(attempt: int, max_attempts: int = MAX_ATTEMPTS) -> str:
     forces a class-jump.
     """
     return RETRY if attempt < max_attempts else CLASS_JUMP
+
+
+def _mint_outcome(
+    subtask_id: str, attempt: int, action: str, strategy: str, message: str
+) -> AttemptOutcome:
+    """Mint a genuine AttemptOutcome and record it in the identity registry."""
+    outcome = AttemptOutcome(
+        subtask_id=subtask_id,
+        attempt=attempt,
+        action=action,
+        strategy=strategy,
+        message=message,
+        _mint=_MINT,
+    )
+    _MINTED.add(outcome)
+    return outcome
+
+
+def is_genuine_outcome(outcome: object) -> bool:
+    """True only for an AttemptOutcome minted by AttemptTracker.record_failure().
+
+    Identity membership in ``_MINTED`` (not ``isinstance``) — subclass /
+    ``object.__new__`` forgeries are rejected. Non-weakref-able / unhashable
+    inputs return False cleanly.
+    """
+    try:
+        return outcome in _MINTED
+    except TypeError:
+        return False
 
 
 class AttemptTracker:
@@ -102,13 +152,7 @@ class AttemptTracker:
         if self._audit is not None:
             self._audit("attempt", message)
 
-        return AttemptOutcome(
-            subtask_id=subtask_id,
-            attempt=attempt,
-            action=action,
-            strategy=strategy,
-            message=message,
-        )
+        return _mint_outcome(subtask_id, attempt, action, strategy, message)
 
     def reset(self, subtask_id: str) -> None:
         """Clear the counter for a subtask (e.g. after a successful class-jump)."""
