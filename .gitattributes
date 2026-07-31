@@ -1,0 +1,8 @@
+# Normalize all text files to LF in the repository (consistent public Python repo).
+* text=auto eol=lf
+
+# Explicit binary types (never touch line endings).
+*.png binary
+*.gif binary
+*.mp4 binary
+*.patch -text
