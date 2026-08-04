@@ -57,6 +57,31 @@ proof — it re-runs the forgery attempts (subclass, `object.__new__`, hand-buil
 missing) and asserts each is rejected, and that only a real gate-minted approval
 proceeds.
 
+## Benchmark
+
+The number that matters is **categorical, not a ratio**. On a code-review task that never converges (the model never emits parseable findings), `guardloop` has a **hard, deterministic ceiling**:
+
+- it stops on its own after exactly **6 LLM calls / 819 tokens** and returns `EXHAUSTED` — measured, and asserted at runtime against `MAX_ATTEMPTS × len(STRATEGIES)` (`3 × 2 = 6`), so a core change breaks the benchmark loudly instead of reporting a false number;
+- a **naive retry loop has no ceiling at all** (`naive_self_terminates: false`) — only a human or a timeout stops it.
+
+The token *ratio* below depends on **when a human kills the naive loop** (`K`), so it is labeled as such — it is illustrative, not the headline:
+
+| K (human kills naive loop at) | naive calls | naive tokens | guardloop | token ratio |
+|---|---|---|---|---|
+| 10  | 10  | 1160  | 6 / 819 | 1.42× |
+| 25  | 25  | 2900  | 6 / 819 | 3.54× |
+| 50  | 50  | 5800  | 6 / 819 | 7.08× |
+| 100 | 100 | 11600 | 6 / 819 | 14.16× |
+
+**Honest caveat:** the absolute token counts are tiny (819) because this is a single small task on the deterministic `fake` provider. The benchmark demonstrates the *mechanism* — unbounded → bounded — not a large bill. It scales with task size × the number of stuck subtasks in a real multi-agent run.
+
+Reproduce:
+
+```bash
+python benchmarks/bench_antiloop.py          # human-readable table
+python benchmarks/bench_antiloop.py --json   # machine-readable measurements
+```
+
 ## Quickstart (no API key)
 
 ```bash
