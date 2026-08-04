@@ -111,7 +111,11 @@ def _fresh_client() -> LLMClient:
 
 def _read(client: LLMClient) -> Measurement:
     t = client.totals
-    return Measurement(calls=int(t["calls"]), prompt=int(t["prompt"]), completion=int(t["completion"]))
+    return Measurement(
+        calls=int(t["calls"]),
+        prompt=int(t["prompt"]),
+        completion=int(t["completion"]),
+    )
 
 
 def measure_guardloop() -> Measurement:
@@ -263,11 +267,26 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         nargs="+",
         default=DEFAULT_NAIVE_KILLS,
-        help="Operator kill point(s) K: blind retries tolerated before kill (DECLARED, not measured).",
+        help=(
+            "Operator kill point(s) K: blind retries tolerated before kill "
+            "(DECLARED, not measured)."
+        ),
     )
-    parser.add_argument("--project-provider", default=PROJECTION_PROVIDER, help="Provider for DERIVED cost projection.")
-    parser.add_argument("--project-model", default=PROJECTION_MODEL, help="Model for DERIVED cost projection.")
-    parser.add_argument("--json", action="store_true", help="Emit the measured report as machine-readable JSON.")
+    parser.add_argument(
+        "--project-provider",
+        default=PROJECTION_PROVIDER,
+        help="Provider for DERIVED cost projection.",
+    )
+    parser.add_argument(
+        "--project-model",
+        default=PROJECTION_MODEL,
+        help="Model for DERIVED cost projection.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the measured report as machine-readable JSON.",
+    )
     args = parser.parse_args(argv)
 
     report = build_report(args.naive_kill, provider=args.project_provider, model=args.project_model)
