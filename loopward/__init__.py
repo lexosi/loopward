@@ -1,4 +1,4 @@
-"""guardloop — a reliability layer for multi-agent LLM systems.
+"""loopward — a reliability layer for multi-agent LLM systems.
 
 Three guarantees, enforced structurally (not by convention):
   - anti-loop: stop retrying a failing approach after N attempts; switch strategy.
@@ -12,7 +12,7 @@ The supported entry point is :class:`Orchestrator`; ``Orchestrator.run()`` runs
 the whole review→verify flow under the anti-loop and the stop-gate.
 """
 
-from guardloop.engine.orchestrator import Orchestrator, RunResult
+from loopward.engine.orchestrator import Orchestrator, RunResult
 
 __version__ = "0.1.0"
 

@@ -1,22 +1,22 @@
 """No-evasion tests — the stop-gate and anti-loop are STRUCTURAL, not advisory.
 
-guardloop's headline is "you cannot skip the gate". These tests are the proof:
+loopward's headline is "you cannot skip the gate". These tests are the proof:
 a gated phase is unreachable without a real capability token, and the tokens
 (Approval, AttemptOutcome) can only be minted by the gate / the tracker.
 """
 
 import pytest
 
-from guardloop.agents.reviewer import Finding
-from guardloop.agents.verifier import Verifier
-from guardloop.engine.anti_loop import (
+from loopward.agents.reviewer import Finding
+from loopward.agents.verifier import Verifier
+from loopward.engine.anti_loop import (
     CLASS_JUMP,
     AttemptOutcome,
     AttemptTracker,
     is_genuine_outcome,
 )
-from guardloop.engine.llm_wrapper import LLMClient
-from guardloop.engine.stop_gate import Approval, StopGate, is_genuine_approval
+from loopward.engine.llm_wrapper import LLMClient
+from loopward.engine.stop_gate import Approval, StopGate, is_genuine_approval
 
 
 def _verifier() -> Verifier:
@@ -98,10 +98,10 @@ def test_only_tracker_mints_class_jump_grant():
 
 @pytest.mark.unit
 def test_public_entry_is_orchestrator_not_agents():
-    import guardloop
-    import guardloop.agents as agents
+    import loopward
+    import loopward.agents as agents
 
-    assert hasattr(guardloop, "Orchestrator")
+    assert hasattr(loopward, "Orchestrator")
     assert "Reviewer" not in agents.__all__
     assert "Verifier" not in agents.__all__
 

@@ -15,9 +15,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from guardloop.agents.reviewer import Finding
-from guardloop.engine.llm_wrapper import LLMClient, Message
-from guardloop.engine.stop_gate import Approval, is_genuine_approval
+from loopward.agents.reviewer import Finding
+from loopward.engine.llm_wrapper import LLMClient, Message
+from loopward.engine.stop_gate import Approval, is_genuine_approval
 
 # Marker the fake provider can recognise to behave like a verifier offline.
 VERIFY_MARKER = "Confirm or reject each finding"

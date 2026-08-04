@@ -3,15 +3,15 @@
 
 import pytest
 
-from guardloop.engine.audit import AuditLog
-from guardloop.engine.llm_wrapper import LLMClient, Message
-from guardloop.engine.orchestrator import (
+from loopward.engine.audit import AuditLog
+from loopward.engine.llm_wrapper import LLMClient, Message
+from loopward.engine.orchestrator import (
     STATUS_EXHAUSTED,
     STATUS_GATE_DENIED,
     STATUS_OK,
     Orchestrator,
 )
-from guardloop.engine.stop_gate import StopGate
+from loopward.engine.stop_gate import StopGate
 
 DIFF = "return now <= self.expires_at"
 

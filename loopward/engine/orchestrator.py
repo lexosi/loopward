@@ -22,12 +22,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from guardloop.agents.reviewer import STRATEGIES, Finding, Reviewer, ReviewParseError
-from guardloop.agents.verifier import Verifier, VerifyResult
-from guardloop.engine.anti_loop import AttemptTracker
-from guardloop.engine.audit import AuditLog
-from guardloop.engine.llm_wrapper import LLMClient
-from guardloop.engine.stop_gate import StopGate
+from loopward.agents.reviewer import STRATEGIES, Finding, Reviewer, ReviewParseError
+from loopward.agents.verifier import Verifier, VerifyResult
+from loopward.engine.anti_loop import AttemptTracker
+from loopward.engine.audit import AuditLog
+from loopward.engine.llm_wrapper import LLMClient
+from loopward.engine.stop_gate import StopGate
 
 REVIEW_SUBTASK = "review-parse"
 

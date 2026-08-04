@@ -1,8 +1,8 @@
-"""Tests for the guardloop CLI (guardloop/cli.py)."""
+"""Tests for the loopward CLI (loopward/cli.py)."""
 
 import pytest
 
-from guardloop.cli import build_parser, main
+from loopward.cli import build_parser, main
 
 _DIFF_WITH_SMELL = """\
 --- a/auth.py

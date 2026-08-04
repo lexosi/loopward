@@ -2,7 +2,7 @@
 
 import pytest
 
-from guardloop.engine.anti_loop import (
+from loopward.engine.anti_loop import (
     CLASS_JUMP,
     MAX_ATTEMPTS,
     RETRY,

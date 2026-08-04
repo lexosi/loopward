@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from guardloop.engine.llm_wrapper import LLMClient, Message
+from loopward.engine.llm_wrapper import LLMClient, Message
 
 SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
 _FINDING_RE = re.compile(rf"^\s*({'|'.join(SEVERITIES)})\s*:\s*(.+?)\s*$", re.IGNORECASE)

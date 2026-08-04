@@ -1,7 +1,7 @@
-# guardloop
+# loopward
 
 **A reliability layer for multi-agent LLM systems.** Most agent frameworks give
-you *capability* — more tools, more autonomy. `guardloop` gives you the thing
+you *capability* — more tools, more autonomy. `loopward` gives you the thing
 that makes autonomy safe to ship: **reliability**, enforced structurally rather
 than by convention. Anti-loop. Human stop-gates.
 A full audit trail of every decision and every dollar.
@@ -19,7 +19,7 @@ Turn an LLM loose on a task and three failure modes show up fast:
 2. **It acts unsupervised.** No checkpoint before the irreversible step.
 3. **It's a black box.** No record of what it decided, why, or what it cost.
 
-`guardloop` is the small, boring layer that fixes exactly those three.
+`loopward` is the small, boring layer that fixes exactly those three.
 
 ## The three guarantees
 
@@ -51,7 +51,7 @@ strategies a finite number of times and terminates in `EXHAUSTED`, never spins).
 On top of that, the `AttemptOutcome` verdict is a matching tamper-evident token
 that only `AttemptTracker.record_failure()` mints.
 
-The supported entry point is `guardloop.Orchestrator`; the raw agents are not part
+The supported entry point is `loopward.Orchestrator`; the raw agents are not part
 of the public API. [`tests/test_no_evasion.py`](tests/test_no_evasion.py) is the
 proof — it re-runs the forgery attempts (subclass, `object.__new__`, hand-built,
 missing) and asserts each is rejected, and that only a real gate-minted approval
@@ -59,14 +59,14 @@ proceeds.
 
 ## Benchmark
 
-The number that matters is **categorical, not a ratio**. On a code-review task that never converges (the model never emits parseable findings), `guardloop` has a **hard, deterministic ceiling**:
+The number that matters is **categorical, not a ratio**. On a code-review task that never converges (the model never emits parseable findings), `loopward` has a **hard, deterministic ceiling**:
 
 - it stops on its own after exactly **6 LLM calls / 819 tokens** and returns `EXHAUSTED` — measured, and asserted at runtime against `MAX_ATTEMPTS × len(STRATEGIES)` (`3 × 2 = 6`), so a core change breaks the benchmark loudly instead of reporting a false number;
 - a **naive retry loop has no ceiling at all** (`naive_self_terminates: false`) — only a human or a timeout stops it.
 
 The token *ratio* below depends on **when a human kills the naive loop** (`K`), so it is labeled as such — it is illustrative, not the headline:
 
-| K (human kills naive loop at) | naive calls | naive tokens | guardloop | token ratio |
+| K (human kills naive loop at) | naive calls | naive tokens | loopward | token ratio |
 |---|---|---|---|---|
 | 10  | 10  | 1160  | 6 / 819 | 1.42× |
 | 25  | 25  | 2900  | 6 / 819 | 3.54× |
@@ -86,7 +86,7 @@ python benchmarks/bench_antiloop.py --json   # machine-readable measurements
 
 ```bash
 pip install -e .
-guardloop-demo
+loopward-demo
 ```
 
 You'll watch the reviewer's first strategy fail to produce parseable findings
@@ -103,8 +103,8 @@ stop-gate, verify, and write an audit trail:
 Review your own diff:
 
 ```bash
-guardloop path/to/change.patch --gate auto          # offline fake provider
-guardloop path/to/change.patch --provider deepseek  # real LLM (needs key)
+loopward path/to/change.patch --gate auto          # offline fake provider
+loopward path/to/change.patch --provider deepseek  # real LLM (needs key)
 ```
 
 ## Multi-LLM
@@ -113,9 +113,9 @@ One client, swappable providers — the model is **always configurable, never
 hardcoded**:
 
 ```bash
-guardloop diff.patch --provider deepseek --model deepseek-v4-pro
-guardloop diff.patch --provider claude   --model claude-sonnet-4-6
-guardloop diff.patch --provider fake                     # offline, default
+loopward diff.patch --provider deepseek --model deepseek-v4-pro
+loopward diff.patch --provider claude   --model claude-sonnet-4-6
+loopward diff.patch --provider fake                     # offline, default
 ```
 
 Keys are read from the environment only (`DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`
@@ -152,7 +152,7 @@ is injected, so the whole flow is testable offline.
 
 ## Demo
 
-![guardloop demo — anti-loop class-jump, stop-gate, audit trail](docs/demo.gif)
+![loopward demo — anti-loop class-jump, stop-gate, audit trail](docs/demo.gif)
 
 ## Tests
 

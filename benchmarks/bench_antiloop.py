@@ -3,21 +3,21 @@
 WHAT THIS MEASURES
 ------------------
 On a code-review task that never converges (the model never emits a parseable
-``SEVERITY:`` finding), guardloop's anti-loop caps spend at a HARD, deterministic
+``SEVERITY:`` finding), loopward's anti-loop caps spend at a HARD, deterministic
 ceiling — it stops on its own in ``STATUS_EXHAUSTED`` after a fixed number of
-LLM calls. A naive retry loop (what a dev writes without guardloop) does NOT
+LLM calls. A naive retry loop (what a dev writes without loopward) does NOT
 self-terminate: it only stops when a human or a timeout kills it. This script
 measures both and prints the ratio.
 
 CONDITIONS (read before trusting any figure)
 --------------------------------------------
 - **Fake provider, fully offline, deterministic.** No network, no API key. Token
-  counts come from ``guardloop``'s own ``~len//4`` estimator, read straight from
+  counts come from ``loopward``'s own ``~len//4`` estimator, read straight from
   ``LLMClient.totals`` — nothing here is hardcoded.
 - **Non-convergent task.** The fake reply is a fixed sentence with no
   ``SEVERITY:`` line, so ``parse_findings`` raises ``ReviewParseError`` on every
   call. This is the adversarial worst case, on purpose.
-- **The hard bound is the measurement.** guardloop terminating in exactly
+- **The hard bound is the measurement.** loopward terminating in exactly
   ``MAX_ATTEMPTS * len(STRATEGIES)`` calls is measured and asserted, not assumed.
 - **The ratio depends on K, which is DECLARED, not measured.** ``K`` (``--naive-kill``)
   is the operator's kill point — the assumption of how many blind retries a human
@@ -46,15 +46,15 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from guardloop.agents.reviewer import (  # noqa: E402  (after sys.path shim)
+from loopward.agents.reviewer import (  # noqa: E402  (after sys.path shim)
     STRATEGIES,
     Reviewer,
     ReviewParseError,
 )
-from guardloop.engine.anti_loop import MAX_ATTEMPTS  # noqa: E402
-from guardloop.engine.llm_wrapper import PRICING, LLMClient, Message, _calc_cost  # noqa: E402
-from guardloop.engine.orchestrator import STATUS_EXHAUSTED, Orchestrator  # noqa: E402
-from guardloop.engine.stop_gate import GATE_AUTO, StopGate  # noqa: E402
+from loopward.engine.anti_loop import MAX_ATTEMPTS  # noqa: E402
+from loopward.engine.llm_wrapper import PRICING, LLMClient, Message, _calc_cost  # noqa: E402
+from loopward.engine.orchestrator import STATUS_EXHAUSTED, Orchestrator  # noqa: E402
+from loopward.engine.stop_gate import GATE_AUTO, StopGate  # noqa: E402
 
 # A fixed, "hard" diff. Its content is irrelevant to the outcome (the fake never
 # parses) but keeping it constant makes token counts fully deterministic.
@@ -118,7 +118,7 @@ def _read(client: LLMClient) -> Measurement:
     )
 
 
-def measure_guardloop() -> Measurement:
+def measure_loopward() -> Measurement:
     """Run the orchestrator on the non-convergent task; assert the hard bound."""
     client = _fresh_client()
     orchestrator = Orchestrator(llm=client, gate=StopGate(GATE_AUTO))
@@ -165,7 +165,7 @@ def build_report(
     model: str = PROJECTION_MODEL,
 ) -> dict:
     """Assemble every measured figure into a citable, machine-readable dict."""
-    gl = measure_guardloop()
+    gl = measure_loopward()
     priced = (provider, model) in PRICING
     rows = []
     for k in naive_kills:
@@ -176,8 +176,8 @@ def build_report(
                 "calls": nv.calls,
                 "tokens": nv.total_tokens,
                 "projected_cost_usd": project_cost(nv, provider, model),
-                "ratio_tokens_vs_guardloop": round(nv.total_tokens / gl.total_tokens, 2),
-                "ratio_calls_vs_guardloop": round(nv.calls / gl.calls, 2),
+                "ratio_tokens_vs_loopward": round(nv.total_tokens / gl.total_tokens, 2),
+                "ratio_calls_vs_loopward": round(nv.calls / gl.calls, 2),
             }
         )
     return {
@@ -194,7 +194,7 @@ def build_report(
             "strategies": len(STRATEGIES),
             "value": HARD_BOUND,
         },
-        "guardloop": {
+        "loopward": {
             "status": STATUS_EXHAUSTED,
             "self_terminates": True,
             "calls": gl.calls,
@@ -219,7 +219,7 @@ def build_report(
 
 def format_table(report: dict) -> str:
     """Human-readable table. All figures come straight from the measured report."""
-    gl = report["guardloop"]
+    gl = report["loopward"]
     proj = report["projection"]
     lines: list[str] = []
     header = (
@@ -231,12 +231,12 @@ def format_table(report: dict) -> str:
     for row in report["naive"]:
         lines.append(
             f"{row['kill']:>9} | {row['calls']:>11} | {row['tokens']:>12} | "
-            f"{gl['calls']:>8} | {gl['tokens']:>9} | {row['ratio_tokens_vs_guardloop']:>8}x"
+            f"{gl['calls']:>8} | {gl['tokens']:>9} | {row['ratio_tokens_vs_loopward']:>8}x"
         )
     lines.append("")
     lines.append(
         f"DERIVED cost projection ({proj['provider']}/{proj['model']}, "
-        f"priced={proj['priced']}): guardloop ${gl['projected_cost_usd']:.6f} "
+        f"priced={proj['priced']}): loopward ${gl['projected_cost_usd']:.6f} "
         "(naive per-K in --json). Fake measured cost = $0."
     )
     return "\n".join(lines)
@@ -244,11 +244,11 @@ def format_table(report: dict) -> str:
 
 def _claim(report: dict) -> str:
     hb = report["hard_bound"]
-    gl = report["guardloop"]
+    gl = report["loopward"]
     ks = ", ".join(str(r["kill"]) for r in report["naive"])
     return (
         "MEASURED CLAIM\n"
-        f"- guardloop TERMINATES on its own in status {gl['status'].upper()} after "
+        f"- loopward TERMINATES on its own in status {gl['status'].upper()} after "
         f"exactly {gl['calls']} LLM calls "
         f"({hb['formula']} = {hb['max_attempts']}*{hb['strategies']} = {hb['value']}), "
         "deterministic.\n"
@@ -259,7 +259,7 @@ def _claim(report: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Measure guardloop's hard anti-loop bound vs. an unbounded naive retry loop.",
+        description="Measure loopward's hard anti-loop bound vs. an unbounded naive retry loop.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(

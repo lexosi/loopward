@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "guardloop"
+name = "loopward"
 version = "0.1.0"
 description = "Reliability layer for multi-agent LLM systems: anti-loop, human stop-gates, and per-run audit trails."
 readme = "README.md"
@@ -28,14 +28,14 @@ dev = [
 ]
 
 [project.scripts]
-guardloop = "guardloop.cli:main"
-guardloop-demo = "guardloop.demo:console"
+loopward = "loopward.cli:main"
+loopward-demo = "loopward.demo:console"
 
 [project.urls]
-Homepage = "https://github.com/lexosi/guardloop"
+Homepage = "https://github.com/lexosi/loopward"
 
 [tool.setuptools.packages.find]
-include = ["guardloop*"]
+include = ["loopward*"]
 
 [tool.ruff]
 line-length = 100

@@ -19,7 +19,7 @@ dist/
 .coverage
 htmlcov/
 
-# guardloop run outputs (audit trails are per-run, not committed)
+# loopward run outputs (audit trails are per-run, not committed)
 runs/
 
 # demo recording intermediates (docs/demo.gif IS committed)

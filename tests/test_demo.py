@@ -1,9 +1,9 @@
-"""Tests for the packaged offline demo (guardloop/demo.py)."""
+"""Tests for the packaged offline demo (loopward/demo.py)."""
 
 import pytest
 
-from guardloop.agents.reviewer import ReviewParseError, parse_findings
-from guardloop.demo import SAMPLE_DIFF, console, main, scripted_reviewer
+from loopward.agents.reviewer import ReviewParseError, parse_findings
+from loopward.demo import SAMPLE_DIFF, console, main, scripted_reviewer
 
 
 @pytest.mark.unit
@@ -16,7 +16,7 @@ def test_demo_main_delay_zero_does_not_sleep(monkeypatch):
     # If main honored a delay here it would call time.sleep; assert it does not
     # when delay is 0 (the CI-fast default).
     calls = []
-    monkeypatch.setattr("guardloop.demo.time.sleep", lambda s: calls.append(s))
+    monkeypatch.setattr("loopward.demo.time.sleep", lambda s: calls.append(s))
     assert main(["--demo-delay", "0"]) == 0
     assert calls == []
 
@@ -60,6 +60,6 @@ def test_console_uses_paced_delay(monkeypatch):
         captured["default_delay"] = default_delay
         return 0
 
-    monkeypatch.setattr("guardloop.demo.main", fake_main)
+    monkeypatch.setattr("loopward.demo.main", fake_main)
     assert console() == 0
     assert captured["default_delay"] == 0.4

@@ -2,7 +2,7 @@
 
 import pytest
 
-from guardloop.engine.stop_gate import StopGate
+from loopward.engine.stop_gate import StopGate
 
 
 @pytest.mark.unit

@@ -2,7 +2,7 @@
 
 import pytest
 
-from guardloop.engine.llm_wrapper import (
+from loopward.engine.llm_wrapper import (
     EmptyCompletionError,
     LLMClient,
     _calc_cost,

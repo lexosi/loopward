@@ -1,4 +1,4 @@
-"""cli.py — `guardloop` / `python -m guardloop`.
+"""cli.py — `loopward` / `python -m loopward`.
 
 Runs a code-review over a diff file with the reliability engine wired up.
 Defaults to the offline ``fake`` provider so it works with no API key.
@@ -12,15 +12,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from guardloop.engine.audit import AuditLog
-from guardloop.engine.llm_wrapper import DEFAULT_MODEL, LLMClient
-from guardloop.engine.orchestrator import Orchestrator
-from guardloop.engine.stop_gate import StopGate
+from loopward.engine.audit import AuditLog
+from loopward.engine.llm_wrapper import DEFAULT_MODEL, LLMClient
+from loopward.engine.orchestrator import Orchestrator
+from loopward.engine.stop_gate import StopGate
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="guardloop",
+        prog="loopward",
         description="Run a code-review with anti-loop, stop-gate, and audit.",
     )
     p.add_argument("diff", type=Path, help="path to a diff/patch file to review")
@@ -67,17 +67,17 @@ def main(argv: list[str] | None = None) -> int:
     audit = AuditLog(run_id="code-review", base_dir=args.runs_dir)
     orch = Orchestrator(llm=llm, gate=gate, audit=audit)
 
-    print(f"[guardloop] provider={args.provider} model={model} gate={args.gate}")
+    print(f"[loopward] provider={args.provider} model={model} gate={args.gate}")
     result = orch.run(diff)
 
-    print(f"\n[guardloop] status: {result.status}")
-    print(f"[guardloop] {result.summary}")
+    print(f"\n[loopward] status: {result.status}")
+    print(f"[loopward] {result.summary}")
     if result.verify is not None:
         for f in result.verify.confirmed:
             print(f"  confirmed: {f}")
         for f in result.verify.rejected:
             print(f"  rejected:  {f}")
-    print(f"[guardloop] audit trail: {result.run_dir}")
+    print(f"[loopward] audit trail: {result.run_dir}")
     return 0 if result.status == "ok" else 1
 
 

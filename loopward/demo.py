@@ -1,4 +1,4 @@
-"""demo.py — packaged offline demo (powers the `guardloop-demo` console script).
+"""demo.py — packaged offline demo (powers the `loopward-demo` console script).
 
 Shows all three reliability primitives in one run, with NO API key:
 
@@ -12,7 +12,7 @@ Shows all three reliability primitives in one run, with NO API key:
 Entry points
 ------------
 - ``main(argv)``  : ``python demo/run_demo.py`` (default delay 0.0 — fast for CI).
-- ``console()``   : ``guardloop-demo`` (default delay 0.4 — paced for recording).
+- ``console()``   : ``loopward-demo`` (default delay 0.4 — paced for recording).
 
 The delay is presentation-only and never touches the engine.
 """
@@ -23,14 +23,14 @@ import argparse
 import sys
 import time
 
-from guardloop.agents.reviewer import parse_findings
-from guardloop.engine.audit import AuditLog
-from guardloop.engine.llm_wrapper import LLMClient, Message
-from guardloop.engine.orchestrator import Orchestrator
-from guardloop.engine.stop_gate import StopGate
+from loopward.agents.reviewer import parse_findings
+from loopward.engine.audit import AuditLog
+from loopward.engine.llm_wrapper import LLMClient, Message
+from loopward.engine.orchestrator import Orchestrator
+from loopward.engine.stop_gate import StopGate
 
 # Inline sample so the packaged demo works after install regardless of cwd.
-# (A standalone demo/sample_diff.patch also exists for `guardloop <file>` examples.)
+# (A standalone demo/sample_diff.patch also exists for `loopward <file>` examples.)
 SAMPLE_DIFF = """\
 --- a/auth/session.py
 +++ b/auth/session.py
@@ -64,7 +64,7 @@ def scripted_reviewer(messages: list[Message]) -> str:
 
 
 def main(argv: list[str] | None = None, *, default_delay: float = 0.0) -> int:
-    parser = argparse.ArgumentParser(description="guardloop offline demo")
+    parser = argparse.ArgumentParser(description="loopward offline demo")
     parser.add_argument(
         "--demo-delay",
         type=float,
@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None, *, default_delay: float = 0.0) -> int:
     orch = Orchestrator(llm=llm, gate=gate, audit=audit)
 
     line("=" * 60)
-    line("guardloop demo — offline, no API key")
+    line("loopward demo — offline, no API key")
     line("=" * 60)
     result = orch.run(SAMPLE_DIFF)
 
