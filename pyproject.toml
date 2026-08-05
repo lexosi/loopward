@@ -10,7 +10,31 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "lexosi" }]
-keywords = ["llm", "agents", "reliability", "anti-loop", "audit", "human-in-the-loop"]
+keywords = [
+    "agents",
+    "anti-loop",
+    "audit",
+    "capability",
+    "guardrails",
+    "human-in-the-loop",
+    "llm",
+    "multi-agent",
+    "reliability",
+    "stop-gate",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
 dependencies = [
     "python-dotenv>=1.0",
 ]
@@ -33,9 +57,14 @@ loopward-demo = "loopward.demo:console"
 
 [project.urls]
 Homepage = "https://github.com/lexosi/loopward"
+Repository = "https://github.com/lexosi/loopward"
+Issues = "https://github.com/lexosi/loopward/issues"
 
 [tool.setuptools.packages.find]
 include = ["loopward*"]
+
+[tool.setuptools.package-data]
+loopward = ["py.typed"]
 
 [tool.ruff]
 line-length = 100
