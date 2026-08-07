@@ -1,5 +1,7 @@
 # loopward
 
+[![ci](https://github.com/lexosi/loopward/actions/workflows/ci.yml/badge.svg)](https://github.com/lexosi/loopward/actions/workflows/ci.yml)
+
 **A reliability layer for multi-agent LLM systems.** Anti-loop, human stop-gates,
 and a per-run audit trail — enforced structurally, not by convention. Runs
 **offline with zero API keys** out of the box.
