@@ -22,6 +22,8 @@ jobs:
         run: ruff check .
       - name: Test
         run: pytest --cov=loopward --cov-report=term-missing
+      - name: Benchmark (self-verifying invariant)
+        run: python benchmarks/bench_antiloop.py
       - name: Demo smoke (offline, no secrets)
         run: python demo/run_demo.py
 
