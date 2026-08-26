@@ -54,8 +54,8 @@ loopward path/to/change.patch --provider deepseek  # real LLM (needs key)
 
 ## Where this comes from
 
-loopward is the reliability layer extracted from a personal 19-agent
-harness (13 Claude reasoners + 6 DeepSeek workers) I run daily.
+loopward is the reliability layer extracted from [a personal 19-agent
+harness][mas] (13 Claude reasoners + 6 DeepSeek workers) I run daily.
 
 After canonizing a set of advisory rules, compliance was 0/3. After moving
 to deny-by-default enforcement (out-of-process PreToolUse hooks), the
