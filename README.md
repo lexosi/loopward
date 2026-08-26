@@ -52,14 +52,22 @@ loopward path/to/change.patch --gate auto          # offline fake provider
 loopward path/to/change.patch --provider deepseek  # real LLM (needs key)
 ```
 
-## Battle-tested
+## Where this comes from
 
-loopward is the reliability core extracted from a **19-agent orchestration system
-running in production** ([multiagent-system-lex][mas]). The **deny-by-default**
-design is not a preference — it's a measured result. In that system, **advisory
-rules produced 0/3 compliance immediately after canonization; deny-by-default
-enforcement blocked 9/9 unauthorized writes over two months.** Convention did not
-hold; structural enforcement did. loopward carries that lesson as its default.
+loopward is the reliability layer extracted from a personal 19-agent
+harness (13 Claude reasoners + 6 DeepSeek workers) I run daily.
+
+After canonizing a set of advisory rules, compliance was 0/3. After moving
+to deny-by-default enforcement (out-of-process PreToolUse hooks), the
+observed result over the window 2026-06-02 -> 2026-08-04 was:
+**9 blocked tool-calls across 7 runs, 4 via explicit logged override, 0 unauthorized writes.**
+
+**Scope note.** n=3 runs for the advisory baseline, n=7 for the enforcement
+window, single operator. The per-run enforcement logs are not part of the
+public snapshot, so treat this as a dated, documented observation — not a
+benchmark you can re-run. What you *can* re-run is
+`benchmarks/bench_antiloop.py`, which reproduces the table in the Benchmark
+section below, exactly.
 
 [mas]: https://github.com/lexosi/multiagent-system-lex
 
@@ -81,6 +89,8 @@ re-runs every forgery attempt and asserts each is rejected — that's the proof.
 
 [evade]: tests/test_no_evasion.py
 
+See [THREAT_MODEL.md](THREAT_MODEL.md) for what this does and does not defend against.
+
 ## Status
 
 **v0.1, beta.** The public API (`loopward.Orchestrator`) is small and the mechanism
@@ -92,6 +102,8 @@ Roadmap:
 1. Publish to PyPI (`pip install loopward`).
 2. Pluggable strategy sets beyond the built-in review→verify flow.
 3. Structured audit export (JSONL stream) for external dashboards.
+
+Exercised daily in one personal system; no external users yet.
 
 ## Benchmark
 
