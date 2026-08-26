@@ -18,6 +18,7 @@ so they parse cleanly on every platform.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +33,14 @@ def iso_now() -> str:
 def _ts_for_dir() -> str:
     """Filesystem-safe timestamp for the run directory name."""
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
+#: How many ``<ts>-N`` fallbacks to try before giving up on a free run directory.
+MAX_DIR_COLLISIONS = 100
+
+
+class AuditDirectoryError(RuntimeError):
+    """No free run directory could be reserved. Never raised silently."""
 
 
 @dataclass
@@ -57,6 +66,11 @@ class AuditLog:
     base_dir:
         Parent directory under which ``<timestamp>/`` is created. Defaults to
         ``./runs``. The directory is created lazily on :meth:`finalize`.
+
+    The directory name has second precision, so two runs starting within the
+    same second would collide. :meth:`finalize` claims the name atomically and
+    falls back to ``<timestamp>-1``, ``<timestamp>-2``, ... rather than writing
+    over an existing trail.
     """
 
     def __init__(self, run_id: str, base_dir: str | Path = "runs") -> None:
@@ -64,13 +78,18 @@ class AuditLog:
         self.started_at = iso_now()
         self._base_dir = Path(base_dir)
         self._run_dir = self._base_dir / _ts_for_dir()
+        self._dir_reserved = False
         self._events: list[AuditEvent] = []
         self._tokens = {"prompt": 0, "completion": 0, "total": 0}
         self._cost_usd = 0.0
 
     @property
     def run_dir(self) -> Path:
-        """Directory this run's files will be written to (created on finalize)."""
+        """Directory this run's files are written to (claimed on finalize).
+
+        Before :meth:`finalize` this is the preferred name; if another run has
+        already taken it, finalize resolves to a suffixed one.
+        """
         return self._run_dir
 
     @property
@@ -106,7 +125,9 @@ class AuditLog:
 
         Returns the run directory path.
         """
-        self._run_dir.mkdir(parents=True, exist_ok=True)
+        if not self._dir_reserved:
+            self._run_dir = self._reserve_run_dir()
+            self._dir_reserved = True
         summary = self.summary(status, result)
         envelope = {"summary": summary, "events": [e.to_dict() for e in self._events]}
 
@@ -115,6 +136,30 @@ class AuditLog:
         )
         (self._run_dir / "audit.md").write_text(self._render_markdown(summary), encoding="utf-8")
         return self._run_dir
+
+    def _reserve_run_dir(self) -> Path:
+        """Claim a run directory that no other run owns, and return it.
+
+        ``exist_ok=False`` is what makes the claim atomic: the OS refuses the
+        second creation of the same name, so the loser retries with a suffix.
+        An ``os.path.exists()`` probe would leave a TOCTOU window between the
+        check and the create, which is exactly how a trail gets overwritten.
+        """
+        preferred = self._run_dir
+        for suffix in range(MAX_DIR_COLLISIONS + 1):
+            candidate = preferred if suffix == 0 else preferred.with_name(
+                f"{preferred.name}-{suffix}"
+            )
+            try:
+                os.makedirs(candidate, exist_ok=False)
+            except FileExistsError:
+                continue
+            return candidate
+        raise AuditDirectoryError(
+            f"could not reserve a run directory: {preferred} and "
+            f"{MAX_DIR_COLLISIONS} suffixed variants are all taken. "
+            f"Refusing to overwrite an existing audit trail."
+        )
 
     def _render_markdown(self, summary: dict[str, Any]) -> str:
         lines = [
