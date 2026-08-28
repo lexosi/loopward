@@ -7,7 +7,7 @@ Agents never call each other; the orchestrator coordinates them.
 """
 
 from loopward.agents.reviewer import Finding, ReviewParseError, parse_findings
-from loopward.agents.verifier import VerifyResult
+from loopward.agents.verifier import VerifyParseError, VerifyResult
 
 # NOTE: Reviewer and Verifier are intentionally NOT re-exported here. They are
 # internal workers driven only by Orchestrator.run(); calling them directly
@@ -19,5 +19,6 @@ __all__ = [
     "Finding",
     "ReviewParseError",
     "parse_findings",
+    "VerifyParseError",
     "VerifyResult",
 ]

@@ -18,6 +18,7 @@ wrapper: a blank completion raises loudly instead of silently returning "".
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -40,9 +41,20 @@ DEFAULT_MODEL: dict[str, str] = {
     "fake": "fake-1",
 }
 
+#: The caller's declared intent for a completion, passed OUT OF BAND: it never
+#: enters the message payload, because real providers reject unknown keys. The
+#: fake routes on this and must never sniff the prompt text to work out what it
+#: is being asked -- reword a prompt and text-sniffing fails silently, which is
+#: the failure this constant exists to prevent.
+TASK_REVIEW = "review"  # the Reviewer sends f"{TASK_REVIEW}:{strategy}"
+TASK_VERIFY = "verify"
+
 # A scripted fake is either a fixed list of replies (consumed in order) or a
-# function mapping the message list to a reply string.
-FakeScript = Sequence[str] | Callable[[list[Message]], str]
+# function mapping (messages, task) to a reply string.
+FakeScript = Sequence[str] | Callable[[list[Message], str | None], str]
+
+# Numbered findings in a verification request: "1. HIGH: ...".
+_LISTED_RE = re.compile(r"^\s*(\d+)\.\s", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -111,10 +123,15 @@ class LLMClient:
 
     # ---- public API -------------------------------------------------------
 
-    def complete(self, messages: list[Message]) -> LLMResponse:
-        """Run one completion. Routes to the configured provider."""
+    def complete(self, messages: list[Message], *, task: str | None = None) -> LLMResponse:
+        """Run one completion. Routes to the configured provider.
+
+        ``task`` is the caller's declared intent (:data:`TASK_REVIEW` /
+        :data:`TASK_VERIFY`). Only the fake reads it; real providers never see
+        it, which is why it is a keyword argument and not a message field.
+        """
         if self.provider == "fake":
-            text = self._complete_fake(messages)
+            text = self._complete_fake(messages, task)
         elif self.provider == "deepseek":
             text = self._complete_deepseek(messages)
         else:
@@ -143,13 +160,13 @@ class LLMClient:
 
     # ---- providers --------------------------------------------------------
 
-    def _complete_fake(self, messages: list[Message]) -> str:
+    def _complete_fake(self, messages: list[Message], task: str | None) -> str:
         self._fake_calls += 1
         script = self._fake_script
         if script is None:
-            return _fake_heuristic(messages)
+            return _fake_heuristic(messages, task)
         if callable(script):
-            return script(messages)
+            return script(messages, task)
         # sequence: consume in order, clamp to last when exhausted
         idx = min(self._fake_calls - 1, len(script) - 1)
         return script[idx]
@@ -181,17 +198,21 @@ class LLMClient:
         return "".join(block.text for block in resp.content if block.type == "text")
 
 
-def _fake_heuristic(messages: list[Message]) -> str:
+def _fake_heuristic(messages: list[Message], task: str | None = None) -> str:
     """Default offline reply: a tiny deterministic 'code reviewer' + 'verifier'.
 
     Looks at the planted smells in the diff so the demo produces believable,
-    repeatable findings without a network call. If the prompt is a verification
-    request, it confirms everything (rejects nothing).
+    repeatable findings without a network call. Which role it plays is decided
+    by ``task``, never by matching the prompt's wording.
     """
-    joined = "\n".join(m.get("content", "") for m in messages)
-    # Verification pass: confirm all findings (no REJECT lines).
-    if "confirm or reject each finding" in joined.lower():
-        return "CONFIRM all findings."
+    if task == TASK_VERIFY:
+        # One line per listed finding: the adjudication has to cover 1..n or
+        # the verifier rejects it as unparseable.
+        listing = "\n".join(
+            m.get("content", "") for m in messages if m.get("role") == "user"
+        )
+        n = max(1, len(_LISTED_RE.findall(listing)))
+        return "\n".join(f"CONFIRM {i}" for i in range(1, n + 1))
 
     last_user = next(
         (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""

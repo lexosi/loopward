@@ -23,6 +23,9 @@ def _verifier() -> Verifier:
     return Verifier(LLMClient(provider="fake"))
 
 
+DIFF = "--- a/s.py +++ b/s.py @@ -x +y"
+
+
 def _findings() -> list[Finding]:
     return [Finding(severity="HIGH", message="token expiry uses <=")]
 
@@ -39,7 +42,7 @@ def test_verify_without_approval_is_typeerror():
 @pytest.mark.unit
 def test_verify_with_forged_nonapproval_is_rejected():
     with pytest.raises(TypeError):
-        _verifier().verify(_findings(), object())
+        _verifier().verify(_findings(), DIFF, object())
 
 
 @pytest.mark.unit
@@ -60,14 +63,14 @@ def test_denied_gate_has_no_approval_and_cannot_verify():
     assert decision.approved is False
     assert decision.approval is None
     with pytest.raises(TypeError):
-        _verifier().verify(_findings(), decision.approval)
+        _verifier().verify(_findings(), DIFF, decision.approval)
 
 
 @pytest.mark.unit
 def test_only_gate_minted_approval_proceeds():
     decision = StopGate(mode="auto").request("verify", "s")
     assert isinstance(decision.approval, Approval)
-    result = _verifier().verify(_findings(), decision.approval)
+    result = _verifier().verify(_findings(), DIFF, decision.approval)
     assert result.confirmed  # proceeds only with the real token
 
 
@@ -120,7 +123,7 @@ def test_approval_cannot_be_subclassed():
 def test_verify_rejects_object_new_forged_approval():
     forged = object.__new__(Approval)  # skips __init__, never registered
     with pytest.raises(TypeError):
-        _verifier().verify(_findings(), forged)
+        _verifier().verify(_findings(), DIFF, forged)
 
 
 @pytest.mark.unit

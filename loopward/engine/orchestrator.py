@@ -25,13 +25,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from loopward.agents.reviewer import STRATEGIES, Finding, Reviewer, ReviewParseError
-from loopward.agents.verifier import Verifier, VerifyResult
+from loopward.agents.verifier import Verifier, VerifyParseError, VerifyResult
 from loopward.engine.anti_loop import AttemptTracker
 from loopward.engine.audit import AuditLog
 from loopward.engine.llm_wrapper import LLMClient
 from loopward.engine.stop_gate import StopGate
 
 REVIEW_SUBTASK = "review-parse"
+VERIFY_SUBTASK = "verify-parse"
+VERIFY_STRATEGY = "adjudicate"
 
 STATUS_OK = "ok"
 STATUS_GATE_DENIED = "gate_denied"
@@ -118,7 +120,13 @@ class Orchestrator:
             return RunResult(STATUS_GATE_DENIED, findings, None, str(run_dir), summary)
 
         self._audit.record("phase", "verify: start")
-        verify = self._verifier.verify(findings, decision.approval)
+        verify = self._verify_with_anti_loop(findings, diff, decision.approval)
+        if verify is None:
+            summary = "verification produced no usable adjudication"
+            self._audit.record("result", summary)
+            run_dir = self._record_usage_and_finalize(STATUS_EXHAUSTED, summary)
+            return RunResult(STATUS_EXHAUSTED, findings, None, str(run_dir), summary)
+
         self._audit.record(
             "phase",
             f"verify: confirmed {len(verify.confirmed)}, rejected {len(verify.rejected)}",
@@ -157,8 +165,7 @@ class Orchestrator:
                 return None, "", self._record_stop(attempts, budget, tracker_budget)
             strategy = self._strategies[strat_idx]
             try:
-                findings = self._reviewer.review(diff, strategy=strategy)
-                return findings, strategy, ""
+                findings, dropped = self._reviewer.review(diff, strategy=strategy)
             except ReviewParseError:
                 attempts += 1
                 outcome = self._tracker.record_failure(REVIEW_SUBTASK, strategy=strategy)
@@ -170,7 +177,58 @@ class Orchestrator:
                     )
                     self._tracker.reset(REVIEW_SUBTASK)
                     strat_idx += 1
+                continue
+            if dropped:
+                # Not a decision, a datum: the parse succeeded, but this many
+                # lines of the reply were something other than a finding.
+                self._audit.record(
+                    "review_parse",
+                    f"{len(findings)} finding(s) parsed, {dropped} line(s) dropped "
+                    f"on strategy '{strategy}'",
+                    matched=len(findings),
+                    dropped=dropped,
+                    strategy=strategy,
+                )
+            return findings, strategy, ""
         return None, "", STOP_STRATEGIES_EXHAUSTED
+
+    def _verify_with_anti_loop(
+        self, findings: list[Finding], diff: str, approval: object
+    ) -> VerifyResult | None:
+        """Adjudicate findings, retrying an unusable answer under the anti-loop.
+
+        The verify phase used to sit outside the anti-loop, because it could not
+        fail: any reply was accepted. Now that an unusable adjudication is an
+        error, it gets the same treatment as review — including the budget
+        living here, in the loop, so an injected tracker cannot spin it either.
+        """
+        budget = min(self._tracker.max_attempts, MAX_TOTAL_ATTEMPTS)
+        attempts = 0
+        last = ""
+        while attempts < budget:
+            try:
+                return self._verifier.verify(findings, diff, approval)
+            except VerifyParseError as exc:
+                attempts += 1
+                last = str(exc)
+                outcome = self._tracker.record_failure(
+                    VERIFY_SUBTASK, strategy=VERIFY_STRATEGY
+                )
+                if outcome.must_class_jump:
+                    break
+        reason = (
+            STOP_TOTAL_CAP
+            if self._tracker.max_attempts > MAX_TOTAL_ATTEMPTS
+            else STOP_TRACKER_BUDGET
+        )
+        self._audit.record(
+            "anti_loop",
+            f"verify: no usable adjudication after {attempts} attempt(s) ({last})",
+            stop_reason=reason,
+            attempts=attempts,
+            budget=budget,
+        )
+        return None
 
     def _record_stop(self, attempts: int, budget: int, tracker_budget: int) -> str:
         """Record why the loop cut itself short, and return the reason.

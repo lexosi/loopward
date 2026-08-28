@@ -99,7 +99,7 @@ class Measurement:
         return self.prompt + self.completion
 
 
-def _nonconvergent_reply(_messages: list[Message]) -> str:
+def _nonconvergent_reply(_messages: list[Message], _task: str | None) -> str:
     """Fake callable: always returns text with no parseable finding."""
     return NONCONVERGENT_REPLY
 

@@ -4,6 +4,7 @@ import pytest
 
 from loopward.agents.reviewer import ReviewParseError, parse_findings
 from loopward.demo import SAMPLE_DIFF, console, main, scripted_reviewer
+from loopward.engine.llm_wrapper import TASK_REVIEW, TASK_VERIFY
 
 
 @pytest.mark.unit
@@ -23,15 +24,15 @@ def test_demo_main_delay_zero_does_not_sleep(monkeypatch):
 
 @pytest.mark.unit
 def test_scripted_reviewer_concise_is_unparseable():
-    # 'concise' strategy: no system marker -> prose without severity tags.
-    text = scripted_reviewer([{"role": "system", "content": "Review the diff."}])
+    # 'concise' strategy -> prose without severity tags.
+    text = scripted_reviewer([], f"{TASK_REVIEW}:concise")
     with pytest.raises(ReviewParseError):
         parse_findings(text)
 
 
 @pytest.mark.unit
 def test_scripted_reviewer_structured_parses():
-    text = scripted_reviewer([{"role": "system", "content": "You are a strict code reviewer"}])
+    text = scripted_reviewer([], f"{TASK_REVIEW}:structured")
     findings = parse_findings(text)
     assert len(findings) == 2
     assert all(f.severity == "HIGH" for f in findings)
@@ -39,8 +40,10 @@ def test_scripted_reviewer_structured_parses():
 
 @pytest.mark.unit
 def test_scripted_reviewer_verify_confirms_all():
-    text = scripted_reviewer([{"role": "system", "content": "Confirm or reject each finding"}])
-    assert "CONFIRM" in text
+    listing = {"role": "user", "content": "1. HIGH: a\n2. LOW: b"}
+    text = scripted_reviewer([listing], TASK_VERIFY)
+    # full coverage: one adjudication line per listed finding
+    assert text.splitlines() == ["CONFIRM 1", "CONFIRM 2"]
     # a verify reply must contain NO 'REJECT' lines (confirms everything)
     assert "REJECT" not in text.upper()
 

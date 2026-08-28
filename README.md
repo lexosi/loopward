@@ -113,7 +113,7 @@ Exercised daily in one personal system; no external users yet.
 
 The number that matters is **categorical, not a ratio**. On a code-review task
 that never converges, loopward has a hard, deterministic ceiling: it stops on its
-own after exactly **6 LLM calls / 819 tokens** and returns `EXHAUSTED` — asserted
+own after exactly **6 LLM calls / 927 tokens** and returns `EXHAUSTED` — asserted
 at runtime against `MAX_ATTEMPTS × len(STRATEGIES)` (`3 × 2 = 6`), so a core
 change breaks the benchmark loudly instead of reporting a false number. A **naive
 retry loop has no ceiling at all** (`naive_self_terminates: false`) — only a
@@ -124,13 +124,21 @@ labeled as such — illustrative, not the headline:
 
 | K (human kills naive loop at) | naive tokens | loopward | token ratio |
 | --- | --- | --- | --- |
-| 10 | 1160 | 819 | 1.42× |
-| 50 | 5800 | 819 | 7.08× |
-| 100 | 11600 | 819 | 14.16× |
+| 10 | 1340 | 927 | 1.45× |
+| 25 | 3350 | 927 | 3.61× |
+| 50 | 6700 | 927 | 7.23× |
+| 100 | 13400 | 927 | 14.46× |
 
-The absolute counts are tiny (819) because this is one small task on the
+The absolute counts are tiny (927) because this is one small task on the
 deterministic `fake` provider — the benchmark demonstrates the *mechanism*
-(unbounded → bounded), not a large bill. Reproduce:
+(unbounded → bounded), not a large bill.
+
+Token counts are estimated (len//4) and therefore move with prompt length;
+they rose when the diff was wrapped in explicit delimiters to separate
+untrusted input from instructions. The categorical bound — 6 calls,
+MAX_ATTEMPTS x len(STRATEGIES) — is unchanged and is the number that matters.
+
+Reproduce:
 
 ```bash
 python benchmarks/bench_antiloop.py          # human-readable table

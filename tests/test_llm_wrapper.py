@@ -26,7 +26,7 @@ def test_fake_script_list_consumed_in_order_then_clamped():
 
 @pytest.mark.unit
 def test_fake_callable_script():
-    llm = LLMClient(provider="fake", fake_script=lambda msgs: "HIGH: from callable")
+    llm = LLMClient(provider="fake", fake_script=lambda msgs, task: "HIGH: from callable")
     assert "from callable" in llm.complete([{"role": "user", "content": "x"}]).text
 
 
@@ -46,7 +46,7 @@ def test_empty_completion_raises():
 
 @pytest.mark.unit
 def test_totals_accumulate():
-    llm = LLMClient(provider="fake", fake_script=lambda m: "LOW: ok")
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: "LOW: ok")
     llm.complete([{"role": "user", "content": "hello world"}])
     llm.complete([{"role": "user", "content": "again"}])
     t = llm.totals

@@ -20,12 +20,13 @@ The delay is presentation-only and never touches the engine.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 
 from loopward.agents.reviewer import parse_findings
 from loopward.engine.audit import AuditLog
-from loopward.engine.llm_wrapper import LLMClient, Message
+from loopward.engine.llm_wrapper import TASK_REVIEW, TASK_VERIFY, LLMClient, Message
 from loopward.engine.orchestrator import Orchestrator
 from loopward.engine.stop_gate import StopGate
 
@@ -44,17 +45,21 @@ SAMPLE_DIFF = """\
 """
 
 
-def scripted_reviewer(messages: list[Message]) -> str:
+def scripted_reviewer(messages: list[Message], task: str | None = None) -> str:
     """Deterministic fake LLM that forces an anti-loop class-jump.
 
-    - 'concise' strategy   -> chatty prose with no severity tags (parse fails)
+    - 'concise' strategy    -> chatty prose with no severity tags (parse fails)
     - 'structured' strategy -> valid severity-tagged findings
-    - verification request  -> confirms everything
+    - verification request  -> confirms every listed finding
+
+    Routing is on ``task``, never on the prompt's wording: a fake that reads
+    the prompt breaks silently the day someone improves it.
     """
-    system = next((m["content"] for m in messages if m.get("role") == "system"), "")
-    if "confirm or reject each finding" in system.lower():
-        return "CONFIRM all findings."
-    if "strict code reviewer" in system.lower():
+    if task == TASK_VERIFY:
+        listing = "\n".join(m["content"] for m in messages if m.get("role") == "user")
+        n = max(1, len(re.findall(r"^\s*(\d+)\.\s", listing, re.MULTILINE)))
+        return "\n".join(f"CONFIRM {i}" for i in range(1, n + 1))
+    if task == f"{TASK_REVIEW}:structured":
         return (
             "HIGH: token expiry uses `<=`; tokens are accepted exactly at expiry. Use `<`.\n"
             "HIGH: off-by-one; `range(len(items) + 1)` indexes one past the end."
@@ -109,8 +114,8 @@ def main(argv: list[str] | None = None, *, default_delay: float = 0.0) -> int:
 
     # Sanity: the structured-strategy output must parse (explicit raise so this
     # holds even under `python -O`, which strips `assert`).
-    _strict = [{"role": "system", "content": "strict code reviewer"}]
-    if not parse_findings(scripted_reviewer(_strict)):
+    _strict = [{"role": "system", "content": "structured"}]
+    if not parse_findings(scripted_reviewer(_strict, f"{TASK_REVIEW}:structured")):
         raise RuntimeError(
             "demo self-check failed: structured strategy produced no parseable findings"
         )

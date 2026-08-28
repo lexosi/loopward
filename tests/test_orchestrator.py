@@ -1,12 +1,14 @@
 """Integration tests for the orchestrator (fake provider, offline)."""
 
 
+import re
+
 import pytest
 
 from loopward.engine import orchestrator as orch_mod
 from loopward.engine.anti_loop import AttemptTracker
 from loopward.engine.audit import AuditLog
-from loopward.engine.llm_wrapper import LLMClient, Message
+from loopward.engine.llm_wrapper import TASK_REVIEW, TASK_VERIFY, LLMClient, Message
 from loopward.engine.orchestrator import (
     STATUS_EXHAUSTED,
     STATUS_GATE_DENIED,
@@ -24,7 +26,7 @@ def _audit(tmp):
 
 @pytest.mark.integration
 def test_happy_path_ok(tmp_path):
-    llm = LLMClient(provider="fake", fake_script=lambda m: _reply(m))
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: _reply(m, task))
     orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path))
     result = orch.run(DIFF)
     assert result.status == STATUS_OK
@@ -34,7 +36,7 @@ def test_happy_path_ok(tmp_path):
 
 @pytest.mark.integration
 def test_gate_denied_stops_before_verify(tmp_path):
-    llm = LLMClient(provider="fake", fake_script=lambda m: _reply(m))
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: _reply(m, task))
     orch = Orchestrator(llm, StopGate(mode="deny"), audit=_audit(tmp_path))
     result = orch.run(DIFF)
     assert result.status == STATUS_GATE_DENIED
@@ -55,7 +57,7 @@ def test_anti_loop_class_jump_then_success(tmp_path):
 
 @pytest.mark.integration
 def test_exhausted_when_nothing_parses(tmp_path):
-    llm = LLMClient(provider="fake", fake_script=lambda m: "no tags here, just prose")
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: "no tags here, just prose")
     orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path))
     result = orch.run(DIFF)
     assert result.status == STATUS_EXHAUSTED
@@ -64,7 +66,7 @@ def test_exhausted_when_nothing_parses(tmp_path):
 
 @pytest.mark.integration
 def test_audit_files_written(tmp_path):
-    llm = LLMClient(provider="fake", fake_script=lambda m: _reply(m))
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: _reply(m, task))
     orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path))
     result = orch.run(DIFF)
     from pathlib import Path
@@ -77,18 +79,23 @@ def test_audit_files_written(tmp_path):
 # ---- fake reply helpers ---------------------------------------------------
 
 
-def _reply(messages: list[Message]) -> str:
-    system = next((m["content"] for m in messages if m.get("role") == "system"), "")
-    if "confirm or reject each finding" in system.lower():
-        return "CONFIRM all"
+def _confirm_all(messages: list[Message]) -> str:
+    """Adjudicate every listed finding: the verifier requires full coverage."""
+    listing = "\n".join(m["content"] for m in messages if m.get("role") == "user")
+    n = len(re.findall(r"^\s*(\d+)\.\s", listing, re.MULTILINE))
+    return "\n".join(f"CONFIRM {i}" for i in range(1, n + 1))
+
+
+def _reply(messages: list[Message], task: str | None) -> str:
+    if task == TASK_VERIFY:
+        return _confirm_all(messages)
     return "HIGH: token expiry uses <=, use <"
 
 
-def _force_class_jump(messages: list[Message]) -> str:
-    system = next((m["content"] for m in messages if m.get("role") == "system"), "")
-    if "confirm or reject each finding" in system.lower():
-        return "CONFIRM all"
-    if "strict code reviewer" in system.lower():  # structured strategy
+def _force_class_jump(messages: list[Message], task: str | None) -> str:
+    if task == TASK_VERIFY:
+        return _confirm_all(messages)
+    if task == f"{TASK_REVIEW}:structured":
         return "HIGH: token expiry uses <=, use <"
     return "vague prose with no severity tags"  # concise strategy: unparseable
 
@@ -102,7 +109,7 @@ def _force_class_jump(messages: list[Message]) -> str:
 @pytest.mark.integration
 def test_gate_decision_lands_in_the_trail(tmp_path):
     audit = _audit(tmp_path)
-    llm = LLMClient(provider="fake", fake_script=lambda m: _reply(m))
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: _reply(m, task))
     Orchestrator(llm, StopGate(mode="auto"), audit=audit).run(DIFF)
     assert "gate" in {e.kind for e in audit.events}
 
@@ -111,7 +118,7 @@ def test_gate_decision_lands_in_the_trail(tmp_path):
 def test_gate_denied_is_recorded_too(tmp_path):
     # A refusal is the decision most worth having in the trail.
     audit = _audit(tmp_path)
-    llm = LLMClient(provider="fake", fake_script=lambda m: _reply(m))
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: _reply(m, task))
     Orchestrator(llm, StopGate(mode="deny"), audit=audit).run(DIFF)
     gate_events = [e for e in audit.events if e.kind == "gate"]
     assert len(gate_events) == 1
@@ -121,7 +128,7 @@ def test_gate_denied_is_recorded_too(tmp_path):
 @pytest.mark.integration
 def test_gate_event_carries_structured_data(tmp_path):
     audit = _audit(tmp_path)
-    llm = LLMClient(provider="fake", fake_script=lambda m: _reply(m))
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: _reply(m, task))
     Orchestrator(llm, StopGate(mode="auto"), audit=audit).run(DIFF)
     data = next(e for e in audit.events if e.kind == "gate").data
     assert data["mode"] == "auto"
@@ -152,7 +159,7 @@ def test_orchestrator_does_not_override_an_explicit_sink(tmp_path):
     mine: list[tuple[str, str]] = []
     audit = _audit(tmp_path)
     gate = StopGate(mode="auto", audit=lambda kind, msg, **data: mine.append((kind, msg)))
-    llm = LLMClient(provider="fake", fake_script=lambda m: _reply(m))
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: _reply(m, task))
     Orchestrator(llm, gate, audit=audit).run(DIFF)
     assert mine and mine[0][0] == "gate"
     assert "gate" not in {e.kind for e in audit.events}
@@ -174,7 +181,7 @@ def _never_parses():
     """Fake LLM whose output never parses, and that screams rather than spin."""
     calls = {"n": 0}
 
-    def reply(_messages: list[Message]) -> str:
+    def reply(_messages: list[Message], _task: str | None) -> str:
         calls["n"] += 1
         if calls["n"] > SPIN_GUARD:
             raise LoopUnbounded(f"{calls['n']} LLM calls and still going")
