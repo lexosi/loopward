@@ -19,7 +19,14 @@ wired up, so it shows 9 events; `loopward-demo` now emits 10 — the extra line 
 ```
 
 which appears between `review: ok via strategy 'structured'` and `verify: start`.
-No other line changed. Regeneration is pending.
+No other line changed.
+
+The README caption that used to assert the GIF showed real `loopward-demo`
+output was **deliberately withdrawn**: the claim stopped being true once the
+demo changed, and a dated promise to regenerate ages badly in a README. The
+caption there now reads only "Illustrative" and points here. This file is the
+single source of record for that debt — restore a caption asserting the GIF
+matches real output only once the GIF has actually been re-recorded.
 
 ## Measured from the artifact
 

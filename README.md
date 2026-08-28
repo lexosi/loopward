@@ -8,9 +8,8 @@ and a per-run audit trail — enforced structurally, not by convention. Runs
 
 ![loopward demo — anti-loop class-jump, stop-gate, audit trail](docs/demo.gif)
 
-*Rendered from actual `loopward-demo` output, recorded before the gate event
-was wired into the audit trail. Regeneration pending: the demo now emits one
-additional `[gate]` line. See [docs/RECORDING.md](docs/RECORDING.md).*
+*Illustrative. See [docs/RECORDING.md](docs/RECORDING.md) for how this is
+produced and what it does not currently show.*
 
 ## The problem
 
