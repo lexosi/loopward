@@ -22,6 +22,8 @@ test with the ``fake`` provider.
 
 from __future__ import annotations
 
+import sys
+import traceback
 from dataclasses import dataclass
 
 from loopward.agents.reviewer import STRATEGIES, Finding, Reviewer, ReviewParseError
@@ -38,6 +40,10 @@ VERIFY_STRATEGY = "adjudicate"
 STATUS_OK = "ok"
 STATUS_GATE_DENIED = "gate_denied"
 STATUS_EXHAUSTED = "exhausted"
+#: The run did not reach a verdict: something escaped. The trail is still
+#: written, because "we do not know what happened" is the one thing an audit
+#: trail must never say about a run that happened.
+STATUS_CRASHED = "crashed"
 
 #: Absolute ceiling on review attempts in a single run, whatever the injected
 #: tracker and strategy list add up to. This is a SPEND limit, not a design
@@ -91,7 +97,37 @@ class Orchestrator:
         self._verifier = Verifier(llm)
 
     def run(self, diff: str) -> RunResult:
-        """Execute the review→verify flow and finalize the audit trail."""
+        """Execute the review→verify flow and finalize the audit trail.
+
+        Nothing leaves this method without the trail being written first. That
+        is the whole point: for a package whose third headline is "audit
+        trail", an unhandled exception used to mean zero record of what
+        happened — the default failure mode was to audit nothing.
+
+        Two failure shapes, deliberately not treated alike:
+
+        - **The work failed** (network, provider, EOF at the gate, Ctrl-C).
+          The trail is finalized as :data:`STATUS_CRASHED` and the exception is
+          re-raised. Any findings already produced stay in the trail and do
+          *not* come back through the return value: at that point they are
+          unverified reviewer output, and handing them over the result channel
+          would present the generator's guess as the adjudicator's verdict.
+        - **Only the write failed** (:meth:`_record_usage_and_finalize`). The
+          review itself was complete and correct, so it is reported normally
+          and nothing is raised. A lost record does not retroactively make a
+          good run a bad one.
+        """
+        try:
+            return self._run(diff)
+        except BaseException as exc:
+            # BaseException on purpose: KeyboardInterrupt at the interactive
+            # gate is the single most likely way a real run ends early, and it
+            # is not an Exception. The trail is written, then the original
+            # exception continues on its way untouched.
+            self._finalize_crashed(exc)
+            raise
+
+    def _run(self, diff: str) -> RunResult:
         self._audit.record("phase", "review: start")
         findings, strategy, stop_reason = self._review_with_anti_loop(diff)
 
@@ -107,8 +143,18 @@ class Orchestrator:
             run_dir = self._record_usage_and_finalize(STATUS_EXHAUSTED, summary)
             return RunResult(STATUS_EXHAUSTED, [], None, str(run_dir), summary)
 
+        # The findings themselves ride in `data`, never in `message`: the
+        # message is what the demo and the README quote, and it stays
+        # byte-identical. `verified=False` is not decoration — at this point
+        # these are the reviewer's claims and nothing has adjudicated them. A
+        # trail that stored them unmarked would be filing the generator's
+        # output as if it were the evaluator's verdict.
         self._audit.record(
-            "phase", f"review: ok via strategy '{strategy}' ({len(findings)} findings)"
+            "phase",
+            f"review: ok via strategy '{strategy}' ({len(findings)} findings)",
+            stage="review",
+            verified=False,
+            findings=[str(f) for f in findings],
         )
 
         gate_summary = f"{len(findings)} findings ready to verify"
@@ -263,11 +309,68 @@ class Orchestrator:
         )
         return reason
 
-    def _record_usage_and_finalize(self, status: str, result: str):
-        # Pull accumulated usage from the client and fold it into the audit trail
-        # once, just before writing it out.
+    def _fold_usage(self) -> None:
+        """Pull accumulated usage from the client into the trail, once."""
         t = self._llm.totals
         self._audit.record_usage(
             prompt=int(t["prompt"]), completion=int(t["completion"]), cost_usd=t["cost_usd"]
         )
-        return self._audit.finalize(status, result)
+
+    def _record_usage_and_finalize(self, status: str, result: str) -> str:
+        """Fold usage in and write the trail. Never raises.
+
+        This is the f1 path: the run reached a verdict and only the write
+        failed. Raising here would turn a correct review into a failed one over
+        a storage problem, so the caller gets its result and the reason the
+        record is missing goes to stderr.
+
+        The path returned is what is **on disk**, not what was wanted — empty
+        when nothing was created at all. A reserved-but-empty directory, or a
+        pair where only ``audit.json`` landed, are both real things a user can
+        go and look at; a directory that was never created is not.
+        """
+        self._fold_usage()
+        try:
+            return str(self._audit.finalize(status, result))
+        except Exception as exc:
+            print(
+                f"warning: run finished with status '{status}' but its audit trail "
+                f"could not be written: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return self._audit.run_dir_on_disk
+
+    def _finalize_crashed(self, exc: BaseException) -> None:
+        """Write the trail for a run that never reached a verdict.
+
+        Never raises. It runs inside an exception handler, and a guard that
+        blows up while saving is the same bug it exists to fix: the caller would
+        get the storage failure *instead of* the thing that actually went wrong.
+        So a failure here is reported on stderr and the original exception is
+        left to continue untouched.
+        """
+        if self._audit.finalized:
+            # Only `run` finalizes, exactly once. Getting here would mean a
+            # finished trail is already on disk, and overwriting it with a crash
+            # record would destroy the better of the two.
+            return
+        summary = f"run crashed: {type(exc).__name__}: {exc}"
+        try:
+            self._audit.record(
+                "result",
+                summary,
+                error_type=type(exc).__name__,
+                # The full traceback lives here so the entry points never have
+                # to print one at the user.
+                traceback="".join(
+                    traceback.format_exception(type(exc), exc, exc.__traceback__)
+                ),
+            )
+            self._fold_usage()
+            self._audit.finalize(STATUS_CRASHED, summary)
+        except Exception as write_exc:
+            print(
+                f"warning: the run failed and its audit trail could not be written "
+                f"either: {type(write_exc).__name__}: {write_exc}",
+                file=sys.stderr,
+            )

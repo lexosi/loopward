@@ -97,7 +97,12 @@ def main(argv: list[str] | None = None, *, default_delay: float = 0.0) -> int:
     line("=" * 60)
     line("loopward demo — offline, no API key")
     line("=" * 60)
-    result = orch.run(SAMPLE_DIFF)
+    try:
+        result = orch.run(SAMPLE_DIFF)
+    except KeyboardInterrupt:
+        return _report_failure(audit, "interrupted by user", 130)
+    except Exception as exc:
+        return _report_failure(audit, f"{type(exc).__name__}: {exc}", 1)
 
     line("\n--- events ---")
     for e in audit.events:
@@ -110,7 +115,8 @@ def main(argv: list[str] | None = None, *, default_delay: float = 0.0) -> int:
         for f in result.verify.confirmed:
             line(f"  confirmed: {f}")
 
-    line(f"\n--- audit trail written to: {result.run_dir} ---")
+    if result.run_dir:
+        line(f"\n--- audit trail written to: {result.run_dir} ---")
 
     # Sanity: the structured-strategy output must parse (explicit raise so this
     # holds even under `python -O`, which strips `assert`).
@@ -120,6 +126,22 @@ def main(argv: list[str] | None = None, *, default_delay: float = 0.0) -> int:
             "demo self-check failed: structured strategy produced no parseable findings"
         )
     return 0 if result.status == "ok" else 1
+
+
+def _report_failure(audit: AuditLog, reason: str, code: int) -> int:
+    """Same contract as the CLI's handler: message, trail location, exit code.
+
+    The demo is the recorded path, so it gets its own rather than inheriting a
+    bare traceback. It does not finalize the trail either — ``Orchestrator.run``
+    already did, as ``crashed``.
+    """
+    print(f"\nerror: demo run failed: {reason}", file=sys.stderr)
+    trail = audit.run_dir_on_disk
+    if trail:
+        print(f"error: audit trail: {trail}", file=sys.stderr)
+    else:
+        print("error: no audit trail could be written", file=sys.stderr)
+    return code
 
 
 def console() -> int:

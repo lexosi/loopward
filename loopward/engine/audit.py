@@ -6,6 +6,11 @@ Every run gets its own directory ``runs/<iso-timestamp>/`` containing:
 
 The audit log is append-only during a run via :meth:`AuditLog.record`, then
 finalized once with :meth:`AuditLog.finalize`, which writes both files.
+``Orchestrator.run`` is the only caller of ``finalize``, on every exit path
+including a crash, and calling it twice is refused. A write can still fail
+part-way, leaving the directory reserved or only ``audit.json`` written, so
+:attr:`AuditLog.run_dir_on_disk` reports what actually landed rather than what
+was intended.
 
 Design notes
 ------------
@@ -79,6 +84,7 @@ class AuditLog:
         self._base_dir = Path(base_dir)
         self._run_dir = self._base_dir / _ts_for_dir()
         self._dir_reserved = False
+        self._finalized = False
         self._events: list[AuditEvent] = []
         self._tokens = {"prompt": 0, "completion": 0, "total": 0}
         self._cost_usd = 0.0
@@ -91,6 +97,28 @@ class AuditLog:
         already taken it, finalize resolves to a suffixed one.
         """
         return self._run_dir
+
+    @property
+    def finalized(self) -> bool:
+        """True once :meth:`finalize` has been entered, successfully or not.
+
+        A failed finalize still counts: it may have left a reserved directory
+        or a half-written pair of files, and re-running it would overwrite
+        whatever did land. One run, one finalize.
+        """
+        return self._finalized
+
+    @property
+    def run_dir_on_disk(self) -> str:
+        """The run directory **if something was actually created**, else ``""``.
+
+        Deliberately not the same thing as :attr:`run_dir`, which is the name
+        this run *wants*. This one answers the only question a caller reporting
+        a failure may ask: is there anything on disk to go and look at? Pointing
+        a user at a path that was never created is the same class of untruth
+        this package exists to prevent, so an empty string means empty-handed.
+        """
+        return str(self._run_dir) if self._dir_reserved else ""
 
     @property
     def events(self) -> list[AuditEvent]:
@@ -124,7 +152,18 @@ class AuditLog:
         """Write ``audit.json`` and ``audit.md`` to the run directory.
 
         Returns the run directory path.
+
+        Raises :class:`RuntimeError` if called twice. Only ``Orchestrator.run``
+        finalizes a trail, exactly once; a second call would mean that rule had
+        been broken somewhere, and silently honouring it could overwrite a good
+        trail with a worse one.
         """
+        if self._finalized:
+            raise RuntimeError(
+                f"audit trail for run_id={self.run_id!r} was already finalized; "
+                f"a run writes its trail exactly once"
+            )
+        self._finalized = True
         if not self._dir_reserved:
             self._run_dir = self._reserve_run_dir()
             self._dir_reserved = True

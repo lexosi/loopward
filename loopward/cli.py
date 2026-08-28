@@ -18,6 +18,24 @@ from loopward.engine.orchestrator import Orchestrator
 from loopward.engine.stop_gate import StopGate
 
 
+def report_failure(audit: AuditLog, reason: str, code: int) -> int:
+    """Report a run that failed: what happened, where the trail is, what code.
+
+    Three things and no more. In particular it does NOT finalize anything —
+    :meth:`Orchestrator.run` owns the trail and has already written it as
+    ``crashed`` before the exception reached here. And it never prints a
+    traceback: the full one is inside the trail, where it can be read later
+    rather than scrolled past now.
+    """
+    print(f"\nerror: run failed: {reason}", file=sys.stderr)
+    trail = audit.run_dir_on_disk
+    if trail:
+        print(f"error: audit trail: {trail}", file=sys.stderr)
+    else:
+        print("error: no audit trail could be written", file=sys.stderr)
+    return code
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="loopward",
@@ -68,7 +86,14 @@ def main(argv: list[str] | None = None) -> int:
     orch = Orchestrator(llm=llm, gate=gate, audit=audit)
 
     print(f"[loopward] provider={args.provider} model={model} gate={args.gate}")
-    result = orch.run(diff)
+    try:
+        result = orch.run(diff)
+    except KeyboardInterrupt:
+        # 130 = 128 + SIGINT. "The user stopped it" and "the diff has problems"
+        # are different outcomes; the exit code should not conflate them.
+        return report_failure(audit, "interrupted by user", 130)
+    except Exception as exc:
+        return report_failure(audit, f"{type(exc).__name__}: {exc}", 1)
 
     print(f"\n[loopward] status: {result.status}")
     print(f"[loopward] {result.summary}")
@@ -77,7 +102,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  confirmed: {f}")
         for f in result.verify.rejected:
             print(f"  rejected:  {f}")
-    print(f"[loopward] audit trail: {result.run_dir}")
+    if result.run_dir:
+        print(f"[loopward] audit trail: {result.run_dir}")
+    # Empty means the review ran but its trail could not be written; the
+    # orchestrator has already said so on stderr. The exit code answers "does
+    # this diff pass?", not "was the paperwork filed?", so it is unaffected.
     return 0 if result.status == "ok" else 1
 
 
