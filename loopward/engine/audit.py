@@ -48,7 +48,7 @@ class AuditEvent:
     """One recorded event in a run."""
 
     ts: str
-    kind: str  # e.g. "phase", "attempt", "gate", "llm_call", "result"
+    kind: str  # "phase" | "attempt" | "class_jump" | "anti_loop" | "gate" | "result"
     message: str
     data: dict[str, Any] = field(default_factory=dict)
 

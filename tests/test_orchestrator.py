@@ -3,6 +3,7 @@
 
 import pytest
 
+from loopward.engine import orchestrator as orch_mod
 from loopward.engine.anti_loop import AttemptTracker
 from loopward.engine.audit import AuditLog
 from loopward.engine.llm_wrapper import LLMClient, Message
@@ -155,3 +156,50 @@ def test_orchestrator_does_not_override_an_explicit_sink(tmp_path):
     Orchestrator(llm, gate, audit=audit).run(DIFF)
     assert mine and mine[0][0] == "gate"
     assert "gate" not in {e.kind for e in audit.events}
+
+
+# ---- the bound belongs to the loop, not to the collaborator -----------------
+# `Orchestrator(..., tracker=..., strategies=...)` are public parameters. Both
+# multiply into the anti-loop's budget, so if the loop trusts them for its
+# termination, "never spins" is a promise the caller gets to break.
+
+SPIN_GUARD = 600  # far above MAX_TOTAL_ATTEMPTS; trips only if the loop is unbounded
+
+
+class LoopUnbounded(RuntimeError):
+    """Raised by the test double instead of letting the suite hang."""
+
+
+def _never_parses():
+    """Fake LLM whose output never parses, and that screams rather than spin."""
+    calls = {"n": 0}
+
+    def reply(_messages: list[Message]) -> str:
+        calls["n"] += 1
+        if calls["n"] > SPIN_GUARD:
+            raise LoopUnbounded(f"{calls['n']} LLM calls and still going")
+        return "vague prose with no severity tags"
+
+    return reply, calls
+
+
+@pytest.mark.integration
+def test_injected_tracker_cannot_spin(tmp_path):
+    """A tracker that never grants a class-jump must not buy an unbounded loop."""
+    reply, calls = _never_parses()
+    llm = LLMClient(provider="fake", fake_script=reply)
+    result = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path),
+                          tracker=AttemptTracker(max_attempts=10**9)).run(DIFF)
+    assert result.status == STATUS_EXHAUSTED
+    assert calls["n"] <= orch_mod.MAX_TOTAL_ATTEMPTS
+
+
+@pytest.mark.integration
+def test_injected_strategies_cannot_spin(tmp_path):
+    """Same defect, the other multiplier: the default tracker is untouched here."""
+    reply, calls = _never_parses()
+    llm = LLMClient(provider="fake", fake_script=reply)
+    result = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path),
+                          strategies=tuple(f"s{i}" for i in range(10**6))).run(DIFF)
+    assert result.status == STATUS_EXHAUSTED
+    assert calls["n"] <= orch_mod.MAX_TOTAL_ATTEMPTS
