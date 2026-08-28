@@ -25,3 +25,7 @@ runs/
 # demo recording intermediates (docs/demo.gif IS committed)
 demo.mp4
 palette.png
+
+# session reports: they hold verbatim working-session text and this repo is
+# public. The archive lives outside every git tree; this is the safety net.
+informes/
