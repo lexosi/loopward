@@ -3,6 +3,7 @@
 
 import pytest
 
+from loopward.engine.anti_loop import AttemptTracker
 from loopward.engine.audit import AuditLog
 from loopward.engine.llm_wrapper import LLMClient, Message
 from loopward.engine.orchestrator import (
@@ -89,3 +90,68 @@ def _force_class_jump(messages: list[Message]) -> str:
     if "strict code reviewer" in system.lower():  # structured strategy
         return "HIGH: token expiry uses <=, use <"
     return "vague prose with no severity tags"  # concise strategy: unparseable
+
+
+# ---- the gate must leave a trace in the trail -------------------------------
+# loopward's third headline is the audit trail, and the stop-gate is the
+# primitive the README leads with. A gate decision that happens but is not
+# recorded is indistinguishable, after the fact, from a gate that never ran.
+
+
+@pytest.mark.integration
+def test_gate_decision_lands_in_the_trail(tmp_path):
+    audit = _audit(tmp_path)
+    llm = LLMClient(provider="fake", fake_script=lambda m: _reply(m))
+    Orchestrator(llm, StopGate(mode="auto"), audit=audit).run(DIFF)
+    assert "gate" in {e.kind for e in audit.events}
+
+
+@pytest.mark.integration
+def test_gate_denied_is_recorded_too(tmp_path):
+    # A refusal is the decision most worth having in the trail.
+    audit = _audit(tmp_path)
+    llm = LLMClient(provider="fake", fake_script=lambda m: _reply(m))
+    Orchestrator(llm, StopGate(mode="deny"), audit=audit).run(DIFF)
+    gate_events = [e for e in audit.events if e.kind == "gate"]
+    assert len(gate_events) == 1
+    assert gate_events[0].data["verdict"] == "deny"
+
+
+@pytest.mark.integration
+def test_gate_event_carries_structured_data(tmp_path):
+    audit = _audit(tmp_path)
+    llm = LLMClient(provider="fake", fake_script=lambda m: _reply(m))
+    Orchestrator(llm, StopGate(mode="auto"), audit=audit).run(DIFF)
+    data = next(e for e in audit.events if e.kind == "gate").data
+    assert data["mode"] == "auto"
+    assert data["verdict"] == "approve"
+    assert data["reason"]
+    # who decided, and whether that identity was declared or inferred
+    assert data["approver_source"] in ("env", "os_user", "unknown")
+    assert "approver" in data
+
+
+@pytest.mark.integration
+def test_injected_tracker_still_records_attempts(tmp_path):
+    """Same defect class as the gate: a collaborator passed in ready-made.
+
+    The wiring used to live inside ``tracker or AttemptTracker(audit=...)``, so
+    it only ever reached the branch the orchestrator built itself.
+    """
+    audit = _audit(tmp_path)
+    llm = LLMClient(provider="fake", fake_script=_force_class_jump)
+    Orchestrator(llm, StopGate(mode="auto"), audit=audit,
+                 tracker=AttemptTracker()).run(DIFF)
+    assert [e for e in audit.events if e.kind == "attempt"]
+
+
+@pytest.mark.integration
+def test_orchestrator_does_not_override_an_explicit_sink(tmp_path):
+    """Adopting unwired collaborators must not hijack a caller's own sink."""
+    mine: list[tuple[str, str]] = []
+    audit = _audit(tmp_path)
+    gate = StopGate(mode="auto", audit=lambda kind, msg, **data: mine.append((kind, msg)))
+    llm = LLMClient(provider="fake", fake_script=lambda m: _reply(m))
+    Orchestrator(llm, gate, audit=audit).run(DIFF)
+    assert mine and mine[0][0] == "gate"
+    assert "gate" not in {e.kind for e in audit.events}

@@ -8,7 +8,9 @@ and a per-run audit trail — enforced structurally, not by convention. Runs
 
 ![loopward demo — anti-loop class-jump, stop-gate, audit trail](docs/demo.gif)
 
-*Rendered from actual `loopward-demo` output (deterministic, runs offline — try it yourself below).*
+*Rendered from actual `loopward-demo` output, recorded before the gate event
+was wired into the audit trail. Regeneration pending: the demo now emits one
+additional `[gate]` line. See [docs/RECORDING.md](docs/RECORDING.md).*
 
 ## The problem
 
@@ -25,7 +27,9 @@ ceiling — and leave no record of what they decided or what it cost.
   (`interactive` / `auto` for CI / `deny`). The gate is an **object-capability**:
   `verify()` can't run without an approval token the gate alone can mint.
 - **Audit trail** — every attempt, gate decision, token, and cost written per run
-  to `runs/<timestamp>/audit.{json,md}`.
+  to `runs/<timestamp>/audit.{json,md}`. Set `LOOPWARD_APPROVER` to declare who
+  decided (e.g. `ci:github-actions`); otherwise the OS account is recorded, and
+  `approver_source` says which of the two it was.
 
 ## Quickstart (no API key)
 

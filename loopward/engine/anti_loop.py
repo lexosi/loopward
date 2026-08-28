@@ -127,6 +127,16 @@ class AttemptTracker:
         self._audit = audit
         self._counts: dict[str, int] = {}
 
+    def attach_audit(self, sink: AuditSink) -> None:
+        """Adopt ``sink`` only if this tracker was built without one.
+
+        Counterpart to :meth:`StopGate.attach_audit`; see the wiring loop in
+        ``Orchestrator.__init__`` for why this is a method and not a constructor
+        argument the orchestrator fills in.
+        """
+        if self._audit is None:
+            self._audit = sink
+
     def attempts(self, subtask_id: str) -> int:
         """How many failures have been recorded for this subtask."""
         return self._counts.get(subtask_id, 0)

@@ -8,14 +8,20 @@ the next phase runs. Three modes cover the real situations:
                    the audit trail still shows the gate was passed and how.
 - ``deny``         reject everything (dry-run / safety drills).
 
-Every decision is recorded through the optional audit sink, so "who approved
-what, when" is always in the trail.
+Every decision is emitted through the audit sink — as a ``gate`` event carrying
+mode, verdict, reason and approver — so "who approved what, when" is in the
+trail. The sink is optional on this class and :class:`Orchestrator` attaches it
+for any gate that arrives without one; a gate you drive yourself records
+nothing until you give it a sink.
 """
 
 from __future__ import annotations
 
+import getpass
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any, Protocol
 from weakref import WeakSet
 
 GATE_INTERACTIVE = "interactive"
@@ -29,9 +35,49 @@ DENY = "deny"
 _MINT = object()  # module-private token; only this module can mint an Approval
 _MINTED: WeakSet[Approval] = WeakSet()  # identity registry of genuine Approvals
 
-AuditSink = Callable[[str, str], None]
+#: Environment variable a caller can set to declare who is deciding, e.g.
+#: ``LOOPWARD_APPROVER=ci:github-actions``.
+APPROVER_ENV = "LOOPWARD_APPROVER"
+
+SOURCE_ENV = "env"  # declared explicitly by the caller
+SOURCE_OS_USER = "os_user"  # inferred from the OS account
+SOURCE_UNKNOWN = "unknown"  # no identity available
+
+
+class AuditSink(Protocol):
+    """Structured event sink: ``(kind, message, **data)``.
+
+    ``AuditLog.record`` satisfies it. The gate emits its decision through this
+    sink and nowhere else, so a trail with no ``gate`` event means the sink was
+    never attached — not that no decision was taken.
+    """
+
+    def __call__(self, kind: str, message: str, **data: Any) -> None: ...
+
+
 # Prompt function: (phase, summary) -> "y"/"n" answer. Injectable for tests.
 Prompter = Callable[[str, str], str]
+
+
+def _resolve_approver() -> tuple[str | None, str]:
+    """Best-effort identity to attribute this gate decision to, plus its source.
+
+    An explicit declaration always wins. Without it, an unattended CI run would
+    record the runner's OS account as though a person had approved something —
+    in a trail whose whole purpose is "who approved what, when", an identity
+    that merely looks true is worse than none. Hence ``approver_source``: it
+    travels with the value so a reader can tell a declaration from an inference.
+
+    Never raises. ``getpass.getuser()`` fails on hosts with no passwd entry and
+    no user env vars, and a gate decision must not die for want of a name.
+    """
+    declared = os.environ.get(APPROVER_ENV)
+    if declared:
+        return declared, SOURCE_ENV
+    try:
+        return getpass.getuser(), SOURCE_OS_USER
+    except Exception:
+        return None, SOURCE_UNKNOWN
 
 
 class Approval:
@@ -101,6 +147,11 @@ class Decision:
     mode: GateMode
     reason: str
     approval: Approval | None = None
+    #: Who this decision is attributed to; ``None`` when unidentifiable. Named
+    #: for the common case — on a DENY, read it together with ``mode`` and
+    #: ``reason`` (a ``deny``-mode refusal is policy, not a person's call).
+    approver: str | None = None
+    approver_source: str = SOURCE_UNKNOWN  # env | os_user | unknown
 
     @property
     def approved(self) -> bool:
@@ -139,28 +190,50 @@ class StopGate:
         self._audit = audit
         self._prompter = prompter or _default_prompter
 
+    def attach_audit(self, sink: AuditSink) -> None:
+        """Adopt ``sink`` only if this gate was built without one.
+
+        A caller's own sink always wins — the orchestrator uses this to wire up
+        gates that arrived unwired, not to hijack one that came with a sink.
+        """
+        if self._audit is None:
+            self._audit = sink
+
     def request(self, phase: str, summary: str) -> Decision:
         """Ask for approval to proceed into ``phase``."""
+        approver, source = _resolve_approver()
+        who = {"approver": approver, "approver_source": source}
+
         if self.mode == GATE_AUTO:
             decision = Decision(
                 phase, APPROVE, self.mode, "auto-approved",
-                approval=_mint_approval(phase),
+                approval=_mint_approval(phase), **who,
             )
         elif self.mode == GATE_DENY:
-            decision = Decision(phase, DENY, self.mode, "deny mode")
+            decision = Decision(phase, DENY, self.mode, "deny mode", **who)
         else:
             answer = self._prompter(phase, summary)
             if answer in ("y", "yes"):
                 decision = Decision(
                     phase, APPROVE, self.mode, "human approved",
-                    approval=_mint_approval(phase),
+                    approval=_mint_approval(phase), **who,
                 )
             else:
-                decision = Decision(phase, DENY, self.mode, f"human declined ({answer!r})")
+                decision = Decision(
+                    phase, DENY, self.mode, f"human declined ({answer!r})", **who,
+                )
 
         if self._audit is not None:
+            # The message stays byte-identical to what it always was; the
+            # decision's parts also go out as structured `data` so a trail
+            # reader can filter on them without parsing prose.
             self._audit(
                 "gate",
                 f"phase '{phase}' [{self.mode}] -> {decision.verdict} ({decision.reason})",
+                mode=self.mode,
+                verdict=decision.verdict,
+                reason=decision.reason,
+                approver=decision.approver,
+                approver_source=decision.approver_source,
             )
         return decision

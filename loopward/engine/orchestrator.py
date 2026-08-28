@@ -61,7 +61,14 @@ class Orchestrator:
         self._llm = llm
         self._gate = gate
         self._audit = audit or AuditLog(run_id="code-review")
-        self._tracker = tracker or AttemptTracker(audit=self._audit.record)
+        self._tracker = tracker or AttemptTracker()
+        # One wiring point for every collaborator, however it got here. Putting
+        # it inside `tracker or AttemptTracker(audit=...)` only ever reaches the
+        # branch this class builds itself — which is how the gate, always passed
+        # in ready-made, ended up recording nothing at all. Each collaborator
+        # keeps a sink it was given explicitly.
+        for collaborator in (self._gate, self._tracker):
+            collaborator.attach_audit(self._audit.record)
         self._strategies = strategies
         self._reviewer = Reviewer(llm)
         self._verifier = Verifier(llm)
