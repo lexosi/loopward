@@ -25,3 +25,6 @@ runs/
 # demo recording intermediates (docs/demo.gif IS committed)
 demo.mp4
 palette.png
+
+# informes de sesion (no forman parte del proyecto)
+informes/

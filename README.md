@@ -39,11 +39,16 @@ loopward-demo
 
 Runs in seconds, fully offline (deterministic `fake` provider). You'll watch the
 first review strategy fail to parse three times, **class-jump** to a stricter
-strategy that works, pass the stop-gate, verify, and write an audit trail:
+strategy that works, pass the stop-gate, verify, and write an audit trail.
+Abridged excerpt below — the full run prints 10 events; `...` marks omitted
+lines:
 
 ```text
+...
 [class_jump] switching review strategy after 3 failures on 'concise'
 [phase] review: ok via strategy 'structured' (2 findings)
+[gate] phase 'verify' [auto] -> approve (auto-approved)
+...
 [result] 2 confirmed finding(s), blocking
 --- audit trail written to: runs/20260805T101006Z ---
 ```
