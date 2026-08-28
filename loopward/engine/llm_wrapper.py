@@ -26,6 +26,13 @@ Message = dict[str, str]  # {"role": "system"|"user"|"assistant", "content": "..
 
 # USD per 1M tokens, cache-miss rates. Unknown (provider, model) pairs cost 0
 # and emit no charge — keeps the fake provider free and avoids guessing.
+#
+# The 0 is not marked as such downstream. A trail from an unpriced pair reports
+# `"cost_usd": 0.0`, which reads the same as a run that genuinely cost nothing;
+# only the provider/model in the same envelope tells them apart. The benchmark
+# carries a `priced` flag for exactly this and the trail does not. Read a zero
+# here as "not priced", not as "free".
+#
 # Prices are published rates and drift over time; last verified 2026-07-31.
 # Re-check the providers' pricing pages before relying on the cost figures.
 PRICING: dict[tuple[str, str], dict[str, float]] = {
@@ -94,8 +101,15 @@ class LLMClient:
     provider:
         ``"deepseek"`` | ``"claude"`` | ``"fake"``.
     model:
-        Model id. Defaults to a sensible per-provider model. Always configurable;
-        never hardcoded at the call site.
+        Model id. Defaults to a sensible per-provider model. Always
+        configurable; never hardcoded at the call site.
+
+        The promise covers ``model`` and nothing else. The rest of the request
+        is fixed in the provider methods and not exposed: ``claude`` sends
+        ``max_tokens=4096`` (:meth:`_complete_claude`) and ``deepseek`` sends no
+        ``max_tokens`` at all (:meth:`_complete_deepseek`), so the two providers
+        truncate differently and neither says so. Making those configurable is
+        open work, not a claim this class currently meets.
     fake_script:
         Only for ``provider="fake"``. A list of canned replies or a function
         ``(messages) -> str``. If omitted, a built-in heuristic replies.

@@ -21,8 +21,12 @@ the in-process half of that lesson.
 **Known gaps, stated rather than hidden:**
 - `Approval` is not single-use and is not bound to a phase; one approval
   authorises repeated verifications.
-- `is_genuine_outcome()` has no production caller. The real bound on retries
-  is the orchestrator's bounded loop, not the token.
-- The verifier fails open on unparseable model output (deliberate: it does not
-  silently delete real findings), and the anti-loop covers `review`, not
-  `verify`.
+- The real bound on retries is the orchestrator's bounded loop, not the
+  `AttemptOutcome` token. The orchestrator does check that a verdict was minted
+  by the tracker before acting on it, which catches a hand-rolled tracker
+  returning a duck-typed stand-in — the composition error above, not a bound.
+- `AttemptOutcome` is mutable in place. `object.__setattr__(outcome, "action",
+  "class_jump")` flips `must_class_jump` on a genuine, registered outcome and
+  `is_genuine_outcome()` still returns True. `Approval` has the same hole, but
+  there the mutable field is `phase`, which decides nothing; here `action` is
+  the decision. The loop's budget is what makes it survivable.

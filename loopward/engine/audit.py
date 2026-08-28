@@ -48,12 +48,27 @@ class AuditDirectoryError(RuntimeError):
     """No free run directory could be reserved. Never raised silently."""
 
 
+class AuditAlreadyFinalizedError(RuntimeError):
+    """This log already wrote its trail; a second run tried to reuse it.
+
+    A ``RuntimeError`` subclass so existing handlers keep working, and its own
+    type so a caller can tell it apart from a write that failed. The difference
+    decides what to tell the user: a failed write may have left something of
+    *this* run on disk to go and look at; this one means the run wrote nothing
+    and whatever is in the directory belongs to an earlier one.
+    """
+
+
 @dataclass
 class AuditEvent:
     """One recorded event in a run."""
 
     ts: str
-    kind: str  # "phase" | "attempt" | "class_jump" | "anti_loop" | "gate" | "result"
+    # Every kind the engine emits. It is a comment, not a constraint: nothing
+    # validates it and no test asserts the set, so it is only as true as the
+    # last person to add an event. `review_parse` was emitted for several
+    # commits before it was written down here.
+    kind: str  # phase | attempt | class_jump | review_parse | anti_loop | gate | result
     message: str
     data: dict[str, Any] = field(default_factory=dict)
 
@@ -110,13 +125,18 @@ class AuditLog:
 
     @property
     def run_dir_on_disk(self) -> str:
-        """The run directory **if something was actually created**, else ``""``.
+        """The run directory **if this log created something**, else ``""``.
 
         Deliberately not the same thing as :attr:`run_dir`, which is the name
         this run *wants*. This one answers the only question a caller reporting
         a failure may ask: is there anything on disk to go and look at? Pointing
         a user at a path that was never created is the same class of untruth
         this package exists to prevent, so an empty string means empty-handed.
+
+        Scope: it answers for *this* log. A caller that reuses one ``AuditLog``
+        across two runs gets a path here for the second run as well, and it is
+        the first run's trail — which is why ``Orchestrator`` does not ask this
+        when the finalize it refused was :class:`AuditAlreadyFinalizedError`.
         """
         return str(self._run_dir) if self._dir_reserved else ""
 
@@ -153,13 +173,13 @@ class AuditLog:
 
         Returns the run directory path.
 
-        Raises :class:`RuntimeError` if called twice. Only ``Orchestrator.run``
-        finalizes a trail, exactly once; a second call would mean that rule had
-        been broken somewhere, and silently honouring it could overwrite a good
-        trail with a worse one.
+        Raises :class:`AuditAlreadyFinalizedError` if called twice. Only
+        ``Orchestrator.run`` finalizes a trail, exactly once; a second call
+        would mean that rule had been broken somewhere, and silently honouring
+        it could overwrite a good trail with a worse one.
         """
         if self._finalized:
-            raise RuntimeError(
+            raise AuditAlreadyFinalizedError(
                 f"audit trail for run_id={self.run_id!r} was already finalized; "
                 f"a run writes its trail exactly once"
             )

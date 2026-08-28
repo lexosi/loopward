@@ -81,7 +81,7 @@ section below, exactly.
 
 ### Enforced structurally, not by convention
 
-The stop-gate is an object-capability. `Verifier.verify(findings, approval)`
+The stop-gate is an object-capability. `Verifier.verify(findings, diff, approval)`
 requires an `Approval`, and genuineness is checked by **identity membership** in a
 private registry that **only `StopGate.request()` populates** (on APPROVE) — not
 by `isinstance`. Every forgery path is closed within the threat model:
@@ -90,9 +90,13 @@ by `isinstance`. Every forgery path is closed within the threat model:
 - a hand-built `Approval(...)`, a subclass, or an `object.__new__(Approval)`
   instance → rejected (not in the registry / subclassing raises).
 
-The anti-loop's hard bound is the orchestrator's bounded loop, and the
-`AttemptOutcome` verdict is a tamper-evident token only
-`AttemptTracker.record_failure()` mints. [`tests/test_no_evasion.py`][evade]
+The anti-loop's hard bound is the orchestrator's bounded loop — a budget
+computed before the loop runs, which no injected collaborator can raise. The
+`AttemptOutcome` verdict is a separate, weaker thing: only
+`AttemptTracker.record_failure()` can mint one, and the orchestrator checks that
+before acting on it, but a minted verdict can still be mutated in place through
+`object.__setattr__` and nothing detects it. Defence in depth, not the bound —
+see [THREAT_MODEL.md](THREAT_MODEL.md). [`tests/test_no_evasion.py`][evade]
 re-runs every forgery attempt and asserts each is rejected — that's the proof.
 
 [evade]: tests/test_no_evasion.py
@@ -142,9 +146,13 @@ they rose when the diff was wrapped in explicit delimiters to separate
 untrusted input from instructions. The categorical bound — 6 calls,
 MAX_ATTEMPTS x len(STRATEGIES) — is unchanged and is the number that matters.
 
-Reproduce:
+Reproduce. The benchmark is not part of the installed package, so this one
+starts from a clone rather than the `pip install` above:
 
 ```bash
+git clone https://github.com/lexosi/loopward.git
+cd loopward
+pip install -e .
 python benchmarks/bench_antiloop.py          # human-readable table
 python benchmarks/bench_antiloop.py --json   # machine-readable measurements
 ```
@@ -161,8 +169,13 @@ loopward diff.patch --provider fake                     # offline, default
 ```
 
 Keys are read from the environment only (`DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`
-— see `.env.example`). The real SDKs are optional installs
-(`pip install "loopward[deepseek]"` or `"loopward[claude]"`).
+— see `.env.example`). The real SDKs are optional extras. loopward is not on
+PyPI yet, so ask for them through the git URL, not by bare name:
+
+```bash
+pip install "loopward[deepseek] @ git+https://github.com/lexosi/loopward.git"
+pip install "loopward[claude]   @ git+https://github.com/lexosi/loopward.git"
+```
 
 ## Architecture
 
@@ -194,7 +207,13 @@ collaborator is injected, so the whole flow is testable offline.
 
 ## Tests
 
+Also from a clone — `pip install` ships the package, not the test suite or the
+tools that run it:
+
 ```bash
+git clone https://github.com/lexosi/loopward.git
+cd loopward
+pip install -e ".[dev]"            # brings pytest and ruff
 pytest                             # all green, offline, no secrets
 pytest tests/test_no_evasion.py    # the gate cannot be bypassed (structural proof)
 ruff check .

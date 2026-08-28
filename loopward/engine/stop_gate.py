@@ -21,13 +21,20 @@ import getpass
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Final, Literal, Protocol
 from weakref import WeakSet
 
-GATE_INTERACTIVE = "interactive"
-GATE_AUTO = "auto"
-GATE_DENY = "deny"
-GateMode = str  # one of the GATE_* constants
+#: The three gate modes, as a type rather than a promise. It used to be
+#: ``GateMode = str``, which made ``def f(m: GateMode)`` accept ``"potato"`` —
+#: a name that looked like a constraint and was an alias for ``str``.
+GateMode = Literal["interactive", "auto", "deny"]
+
+# ``Final`` is load-bearing here, not decoration: without it a type checker
+# infers plain ``str`` for these and then rejects ``StopGate(GATE_AUTO)``
+# against the Literal above.
+GATE_INTERACTIVE: Final[GateMode] = "interactive"
+GATE_AUTO: Final[GateMode] = "auto"
+GATE_DENY: Final[GateMode] = "deny"
 
 APPROVE = "approve"
 DENY = "deny"
@@ -184,6 +191,10 @@ class StopGate:
         audit: AuditSink | None = None,
         prompter: Prompter | None = None,
     ) -> None:
+        # Kept even though `mode` is typed. `cli.py` narrows its own input with
+        # argparse `choices`, but what it hands over is still a plain `str`, and
+        # StopGate is public: anyone can construct one with "potato". The
+        # Literal helps a reader and a checker; this is what holds at runtime.
         if mode not in (GATE_INTERACTIVE, GATE_AUTO, GATE_DENY):
             raise ValueError(f"unknown gate mode {mode!r} (use interactive|auto|deny)")
         self.mode = mode

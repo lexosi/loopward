@@ -1,10 +1,15 @@
 """anti_loop.py — stop retrying a losing approach.
 
 The rule: a single subtask may be attempted at most ``MAX_ATTEMPTS`` times with
-the *same class of approach*. On the next failure the tracker refuses another
-naive retry and demands a **class-jump** — a switch to a materially different
-strategy. This is what stops an agent from burning tokens hammering the same
-wall.
+the *same class of approach*. On the next failure the tracker returns a
+**class-jump** verdict — the instruction to switch to a materially different
+strategy.
+
+The tracker issues verdicts; it does not enforce them. ``record_failure`` can be
+called any number of times and always returns successfully. What actually stops
+an agent from burning tokens hammering the same wall is
+``Orchestrator._review_with_anti_loop``, which owns the loop and computes its
+budget before entering it.
 
 Usage
 -----
@@ -34,18 +39,36 @@ CLASS_JUMP = "class_jump"
 _MINT = object()  # module-private token; only this module can mint an AttemptOutcome
 _MINTED: WeakSet[AttemptOutcome] = WeakSet()  # identity registry of genuine outcomes
 
-# Optional sink for structured events, e.g. AuditLog.record.
+# Optional sink for structured events. This is the *minimum* the tracker needs —
+# two positionals — not the full sink shape: it records ``(kind, message)`` and
+# no structured data. ``AuditLog.record(kind, message, **data)`` satisfies it,
+# and so does the wider Protocol of the same name in ``stop_gate``, which the
+# gate needs because it does emit data.
 AuditSink = Callable[[str, str], None]
 
 
 @dataclass(frozen=True, eq=False)
 class AttemptOutcome:
-    """Immutable, unforgeable verdict for one recorded failure.
+    """Verdict for one recorded failure. Only the tracker mints one.
 
-    Only :meth:`AttemptTracker.record_failure` can mint one. A hand-built
-    ``AttemptOutcome(...)`` raises — so a caller cannot fabricate a
-    ``class-jump granted`` verdict to drive a hand-rolled loop past the
-    anti-loop rule. That is the structural half of the anti-loop guarantee.
+    A hand-built ``AttemptOutcome(...)`` raises and the class cannot be
+    subclassed, so the only way to obtain one is
+    :meth:`AttemptTracker.record_failure`.
+
+    **Not immutable**, and the caveat weighs more here than the matching one on
+    ``Approval``. ``frozen=True`` blocks casual assignment, but
+    ``object.__setattr__(outcome, "action", CLASS_JUMP)`` mutates a genuine,
+    registered outcome in place: ``must_class_jump`` flips and
+    :func:`is_genuine_outcome` still returns True. ``Approval`` can call its own
+    mutable field harmless because ``phase`` feeds no decision; here ``action``
+    *is* the decision, and nothing detects the edit.
+
+    What minting closes is also narrower than it looks. Forging a ``class_jump``
+    makes the loop stop *earlier* — the harmless direction. The costly verdict is
+    a perpetual ``retry``, and that one never needed forging: ``record_failure``
+    hands it out. So this token is not the bound on retries. The bound is the
+    budget in ``Orchestrator._review_with_anti_loop``, computed before the loop
+    and enforced there whatever the injected tracker returns.
     """
 
     subtask_id: str

@@ -30,7 +30,6 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: Quality Assurance",
     "Typing :: Typed",
@@ -74,8 +73,10 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-q"
+# `loopward` is on testpaths for --doctest-modules only: the anti-loop's usage
+# example was correct but never executed, so it was free to drift in silence.
+testpaths = ["tests", "loopward"]
+addopts = "-q --doctest-modules"
 markers = [
     "unit: fast, isolated unit tests",
     "integration: multi-component tests (still offline, fake provider)",

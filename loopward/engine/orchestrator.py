@@ -28,8 +28,8 @@ from dataclasses import dataclass
 
 from loopward.agents.reviewer import STRATEGIES, Finding, Reviewer, ReviewParseError
 from loopward.agents.verifier import Verifier, VerifyParseError, VerifyResult
-from loopward.engine.anti_loop import AttemptTracker
-from loopward.engine.audit import AuditLog
+from loopward.engine.anti_loop import AttemptOutcome, AttemptTracker, is_genuine_outcome
+from loopward.engine.audit import AuditAlreadyFinalizedError, AuditLog
 from loopward.engine.llm_wrapper import LLMClient
 from loopward.engine.stop_gate import StopGate
 
@@ -173,9 +173,19 @@ class Orchestrator:
             run_dir = self._record_usage_and_finalize(STATUS_EXHAUSTED, summary)
             return RunResult(STATUS_EXHAUSTED, findings, None, str(run_dir), summary)
 
+        # Which findings, not just how many. The counters alone made "the
+        # verifier kept both" a claim the trail could not support: a reader
+        # could see that one was rejected and never learn which. The review
+        # event above already carries its findings in `data`; the asymmetry was
+        # an omission. The `message` is unchanged — the demo and the README
+        # quote it byte-identically.
         self._audit.record(
             "phase",
             f"verify: confirmed {len(verify.confirmed)}, rejected {len(verify.rejected)}",
+            stage="verify",
+            verified=True,
+            confirmed=[str(f) for f in verify.confirmed],
+            rejected=[str(f) for f in verify.rejected],
         )
 
         summary = (
@@ -214,7 +224,7 @@ class Orchestrator:
                 findings, dropped = self._reviewer.review(diff, strategy=strategy)
             except ReviewParseError:
                 attempts += 1
-                outcome = self._tracker.record_failure(REVIEW_SUBTASK, strategy=strategy)
+                outcome = self._record_failure(REVIEW_SUBTASK, strategy)
                 if outcome.must_class_jump:
                     self._audit.record(
                         "class_jump",
@@ -257,9 +267,7 @@ class Orchestrator:
             except VerifyParseError as exc:
                 attempts += 1
                 last = str(exc)
-                outcome = self._tracker.record_failure(
-                    VERIFY_SUBTASK, strategy=VERIFY_STRATEGY
-                )
+                outcome = self._record_failure(VERIFY_SUBTASK, VERIFY_STRATEGY)
                 if outcome.must_class_jump:
                     break
         reason = (
@@ -275,6 +283,29 @@ class Orchestrator:
             budget=budget,
         )
         return None
+
+    def _record_failure(self, subtask_id: str, strategy: str) -> AttemptOutcome:
+        """Record a failed attempt and check the verdict was really minted.
+
+        ``tracker`` is a public constructor parameter, so the object these loops
+        read ``must_class_jump`` off is caller-supplied. This is the same check
+        ``Verifier.verify`` makes on its ``Approval``, against the same threat
+        the threat model names: composition error, not a hostile process. A
+        hand-rolled tracker returning a duck-typed stand-in gets a ``TypeError``
+        here instead of quietly steering the loop.
+
+        Defence in depth, and nothing more. It does not make the verdict
+        tamper-proof: ``object.__setattr__`` still mutates a genuine outcome and
+        this check still passes it (see :class:`AttemptOutcome`). And it is not
+        the bound on retries — that is the budget computed above, in the loop.
+        """
+        outcome = self._tracker.record_failure(subtask_id, strategy=strategy)
+        if not is_genuine_outcome(outcome):
+            raise TypeError(
+                "tracker returned a verdict AttemptTracker.record_failure() did "
+                "not mint; a hand-built, forged, or duck-typed outcome is rejected"
+            )
+        return outcome
 
     def _record_stop(self, attempts: int, budget: int, tracker_budget: int) -> str:
         """Record why the loop cut itself short, and return the reason.
@@ -324,10 +355,18 @@ class Orchestrator:
         a storage problem, so the caller gets its result and the reason the
         record is missing goes to stderr.
 
-        The path returned is what is **on disk**, not what was wanted — empty
-        when nothing was created at all. A reserved-but-empty directory, or a
-        pair where only ``audit.json`` landed, are both real things a user can
-        go and look at; a directory that was never created is not.
+        The path returned is what is **on disk for this run**, not what was
+        wanted — empty when this run created nothing. A reserved-but-empty
+        directory, or a pair where only ``audit.json`` landed, are both real
+        things a user can go and look at; a directory that was never created is
+        not, and neither is one holding somebody else's trail.
+
+        That last case is why the two failures are told apart. A reused
+        ``AuditLog`` refuses the second finalize, and its directory is on disk
+        and full — of the *first* run. Handing that path back would answer "no
+        record was kept of this run" with a path to a record of another one,
+        which is the precise untruth :attr:`AuditLog.run_dir_on_disk` exists to
+        avoid. Reuse itself is not fixed here; the path stops lying about it.
         """
         self._fold_usage()
         try:
@@ -338,6 +377,8 @@ class Orchestrator:
                 f"could not be written: {type(exc).__name__}: {exc}",
                 file=sys.stderr,
             )
+            if isinstance(exc, AuditAlreadyFinalizedError):
+                return ""
             return self._audit.run_dir_on_disk
 
     def _finalize_crashed(self, exc: BaseException) -> None:

@@ -210,3 +210,99 @@ def test_injected_strategies_cannot_spin(tmp_path):
                           strategies=tuple(f"s{i}" for i in range(10**6))).run(DIFF)
     assert result.status == STATUS_EXHAUSTED
     assert calls["n"] <= orch_mod.MAX_TOTAL_ATTEMPTS
+
+
+# --- the tracker's verdict is checked, not just read ------------------------
+#
+# `tracker` is a public constructor parameter, so what the loops read
+# `must_class_jump` off is caller-supplied. `is_genuine_outcome` had no
+# production caller at all; now it guards both places a verdict enters.
+
+
+class DuckOutcome:
+    """A stand-in a hand-rolled tracker might plausibly return."""
+
+    def __init__(self, must_class_jump: bool) -> None:
+        self.must_class_jump = must_class_jump
+        self.attempt = 1
+
+
+class DuckTracker:
+    """Not an AttemptTracker. Mints nothing; returns something that looks right."""
+
+    max_attempts = 3
+
+    def __init__(self, verdict: bool = False) -> None:
+        self._verdict = verdict
+
+    def attach_audit(self, sink):
+        pass
+
+    def record_failure(self, subtask_id, strategy):
+        return DuckOutcome(self._verdict)
+
+    def reset(self, subtask_id):
+        pass
+
+
+@pytest.mark.integration
+def test_review_rejects_a_verdict_the_tracker_never_minted(tmp_path):
+    """A duck-typed outcome is refused where review reads it, not obeyed."""
+    reply, _ = _never_parses()
+    llm = LLMClient(provider="fake", fake_script=reply)
+    orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path),
+                        tracker=DuckTracker())
+    with pytest.raises(TypeError, match="did not mint"):
+        orch.run(DIFF)
+
+
+@pytest.mark.integration
+def test_verify_rejects_a_verdict_the_tracker_never_minted(tmp_path):
+    """The same guard on the verify loop: one check, not half of one."""
+    def reply(_messages: list[Message], task: str | None) -> str:
+        # Review parses; the adjudication does not cover finding 1, so the
+        # verify loop records a failure and reads the verdict.
+        return "nothing adjudicated" if task == TASK_VERIFY else "HIGH: real finding"
+
+    llm = LLMClient(provider="fake", fake_script=reply)
+    orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path),
+                        tracker=DuckTracker())
+    with pytest.raises(TypeError, match="did not mint"):
+        orch.run(DIFF)
+
+
+@pytest.mark.unit
+def test_a_genuine_verdict_still_passes_the_check(tmp_path):
+    """The guard must not cost the ordinary path anything."""
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: _reply(m, task))
+    orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path))
+    assert orch.run(DIFF).status == STATUS_OK
+
+
+# --- the trail keeps both lists, not just the counters ----------------------
+
+
+@pytest.mark.integration
+def test_verify_event_names_which_findings_were_dropped(tmp_path):
+    """"The audit trail keeps both" was a claim the counters could not support.
+
+    `verify: confirmed 1, rejected 1` tells a reader that something was dropped
+    and never which one. The review event already carried its findings in
+    `data`; the verify event now does the same.
+    """
+    def reply(_messages: list[Message], task: str | None) -> str:
+        if task == TASK_VERIFY:
+            return "CONFIRM 1\nREJECT 2"
+        return "HIGH: real bug here\nLOW: probably a false positive"
+
+    llm = LLMClient(provider="fake", fake_script=reply)
+    audit = _audit(tmp_path)
+    result = Orchestrator(llm, StopGate(mode="auto"), audit=audit).run(DIFF)
+    assert result.status == STATUS_OK
+
+    event = next(e for e in audit.events if e.message.startswith("verify: confirmed"))
+    # The message is quoted verbatim by the demo and the README: unchanged.
+    assert event.message == "verify: confirmed 1, rejected 1"
+    assert event.data["confirmed"] == ["HIGH: real bug here"]
+    assert event.data["rejected"] == ["LOW: probably a false positive"]
+    assert event.data["verified"] is True

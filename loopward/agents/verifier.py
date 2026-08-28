@@ -3,7 +3,10 @@
 A second pass that shows the model both the code and the findings and asks it to
 adjudicate each one. This is the "probe before you act" discipline: don't trust
 the first pass blindly. The verifier returns the confirmed findings plus the
-ones it rejected, so the audit trail keeps both.
+ones it rejected, and the orchestrator writes both lists into the ``data`` of
+the trail's ``verify`` event — which finding was dropped, not just how many.
+That is ``audit.json``; ``audit.md`` renders only ts/kind/message, so it still
+shows the counts alone.
 
 The model must answer with one ``CONFIRM <n>`` / ``REJECT <n>`` line per finding
 (1-based), covering every finding exactly once. Anything short of that — a

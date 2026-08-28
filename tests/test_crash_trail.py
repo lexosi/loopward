@@ -242,7 +242,37 @@ def test_a_finished_trail_is_never_written_over(tmp_path, capsys):
 
     assert second.status == STATUS_OK
     assert "already finalized" in capsys.readouterr().err
+    # The second run wrote no trail of its own, so it reports none. Handing back
+    # the reserved directory would point the user at the FIRST run's record as
+    # though it were this one's — the rule is "is there a trail of THIS run",
+    # not "does the path exist".
+    assert second.run_dir == ""
     # Still the first trail, byte for byte — not a second run written over it.
     envelope = _trail(result.run_dir)
     assert envelope["summary"]["status"] == STATUS_OK
     assert envelope["summary"]["started_at"] == audit.started_at
+
+
+@pytest.mark.integration
+def test_a_failed_write_still_reports_what_landed(tmp_path, capsys):
+    """The other half of the rule: a write that failed may leave something real.
+
+    Only the *already finalized* refusal means "nothing of this run exists". A
+    genuine write failure can leave a reserved directory or a half-written pair,
+    and those are things a user can go and look at — so that path is still
+    reported rather than blanked.
+    """
+    audit = AuditLog(run_id="test", base_dir=tmp_path)
+    orch = _orch(audit)
+    original = AuditLog._render_markdown
+    try:
+        AuditLog._render_markdown = _raise_os_error
+        result = orch.run(DIFF)
+    finally:
+        AuditLog._render_markdown = original
+
+    assert result.status == STATUS_OK
+    assert "could not be written" in capsys.readouterr().err
+    # The directory was reserved and audit.json landed before the md failed.
+    assert result.run_dir == audit.run_dir_on_disk != ""
+    assert (pathlib.Path(result.run_dir) / "audit.json").exists()
