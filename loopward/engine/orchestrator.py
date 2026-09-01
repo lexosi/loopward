@@ -53,7 +53,10 @@ STATUS_CRASHED = "crashed"
 MAX_TOTAL_ATTEMPTS = 100
 
 # Why the review loop stopped, recorded so a trail reader can tell an ordinary
-# exhaustion from a ceiling being hit — they mean different things.
+# exhaustion from a budget running out and from a ceiling being hit — the three
+# mean different things. All three reach the trail as `anti_loop.stop_reason`;
+# the first was declared here and emitted nowhere, which left the cut-off that
+# every default configuration takes as the one the trail never mentioned.
 STOP_STRATEGIES_EXHAUSTED = "strategies_exhausted"  # every strategy was tried
 STOP_TRACKER_BUDGET = "tracker_budget"  # max_attempts x strategies used up
 STOP_TOTAL_CAP = "total_cap"  # MAX_TOTAL_ATTEMPTS reached first
@@ -226,13 +229,23 @@ class Orchestrator:
                 attempts += 1
                 outcome = self._record_failure(REVIEW_SUBTASK, strategy)
                 if outcome.must_class_jump:
-                    self._audit.record(
-                        "class_jump",
-                        f"switching review strategy after {outcome.attempt} failures "
-                        f"on '{strategy}'",
-                    )
+                    next_idx = strat_idx + 1
+                    if next_idx < len(self._strategies):
+                        # Only a switch that happens is recorded as one. On the
+                        # last strategy the verdict is still `class_jump`, and
+                        # still right — no more retries with this approach — but
+                        # there is nowhere to jump to, and an event announcing a
+                        # move the loop cannot make is the trail asserting
+                        # something false. Nothing is lost by the silence: the
+                        # tracker's own `attempt` event carries the verdict, and
+                        # the stop event below records how the run ended.
+                        self._audit.record(
+                            "class_jump",
+                            f"switching review strategy after {outcome.attempt} failures "
+                            f"on '{strategy}'",
+                        )
                     self._tracker.reset(REVIEW_SUBTASK)
-                    strat_idx += 1
+                    strat_idx = next_idx
                 continue
             if dropped:
                 # Not a decision, a datum: the parse succeeded, but this many
@@ -246,7 +259,13 @@ class Orchestrator:
                     strategy=strategy,
                 )
             return findings, strategy, ""
-        return None, "", STOP_STRATEGIES_EXHAUSTED
+        # The loop ran out of strategies rather than out of budget. Reaching
+        # here means `attempts` never met `budget`, so `tracker_budget` cannot
+        # have exceeded the ceiling: this exit is always an ordinary exhaustion,
+        # never a refused configuration.
+        return None, "", self._record_stop(
+            attempts, budget, tracker_budget, strategies_exhausted=True
+        )
 
     def _verify_with_anti_loop(
         self, findings: list[Finding], diff: str, approval: object
@@ -307,15 +326,48 @@ class Orchestrator:
             )
         return outcome
 
-    def _record_stop(self, attempts: int, budget: int, tracker_budget: int) -> str:
+    def _record_stop(
+        self,
+        attempts: int,
+        budget: int,
+        tracker_budget: int,
+        *,
+        strategies_exhausted: bool = False,
+    ) -> str:
         """Record why the loop cut itself short, and return the reason.
 
-        A cut-off is never silent: hitting the tracker's own budget and hitting
-        the absolute ceiling are different events for whoever reads the trail —
-        the first is the anti-loop working as configured, the second is a
-        configuration this package refused to honour.
+        A cut-off is never silent, and the review loop has three of them — not
+        the two this docstring used to name. They are different events for
+        whoever reads the trail:
+
+        - :data:`STOP_STRATEGIES_EXHAUSTED` — every strategy was tried and none
+          parsed. The anti-loop did its whole job; the model never produced
+          usable output. This is the exit every default configuration takes,
+          and it went through no ``_record_stop`` at all: the most common
+          cut-off was the one the trail said nothing about.
+        - :data:`STOP_TRACKER_BUDGET` — the budget ran out before the strategy
+          list did. The anti-loop working as configured. Noted, not fixed:
+          with a genuine :class:`AttemptTracker` the two run out on the same
+          attempt, so this branch is unreachable today. It is kept because
+          ``tracker`` is a public parameter and the invariant is the tracker's,
+          not this loop's.
+        - :data:`STOP_TOTAL_CAP` — the absolute ceiling was reached first: a
+          configuration this package refused to honour.
+
+        All three exits of *this* loop leave an ``anti_loop`` event with the
+        same set of fields, so a reader learns one shape and reads
+        ``stop_reason`` to tell them apart. The verify loop emits the same kind
+        with a narrower set; aligning the two is not done here.
         """
-        if tracker_budget > MAX_TOTAL_ATTEMPTS:
+        if strategies_exhausted:
+            reason = STOP_STRATEGIES_EXHAUSTED
+            message = (
+                f"stopped after {attempts} attempts: every review strategy was "
+                f"tried and none produced parseable findings "
+                f"({self._tracker.max_attempts} attempts x "
+                f"{len(self._strategies)} strategies)"
+            )
+        elif tracker_budget > MAX_TOTAL_ATTEMPTS:
             reason = STOP_TOTAL_CAP
             message = (
                 f"stopped after {attempts} attempts: absolute ceiling "

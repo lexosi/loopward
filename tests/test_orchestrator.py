@@ -5,6 +5,7 @@ import re
 
 import pytest
 
+from loopward.agents.reviewer import STRATEGIES
 from loopward.engine import orchestrator as orch_mod
 from loopward.engine.anti_loop import AttemptTracker
 from loopward.engine.audit import AuditLog
@@ -306,3 +307,65 @@ def test_verify_event_names_which_findings_were_dropped(tmp_path):
     assert event.data["confirmed"] == ["HIGH: real bug here"]
     assert event.data["rejected"] == ["LOW: probably a false positive"]
     assert event.data["verified"] is True
+
+
+# --- a cut-off is never silent, and never claims a jump it did not make -----
+#
+# Two halves of one defect, on adjacent lines of the same loop. The review loop
+# has two exits; only the inner `if` was instrumented. So the exit that runs in
+# every default configuration recorded nothing, while the last `class_jump`
+# announced a switch to a strategy that does not exist. One stayed quiet about
+# what happened; the other asserted what did not.
+
+
+@pytest.mark.integration
+def test_strategies_exhausted_is_recorded_like_any_other_cut_off(tmp_path):
+    """The default exhaustion path emits its stop event, in the same shape.
+
+    This is the exit 64 of 85 tracker/strategy combinations take, the demo's
+    sibling path and the one the benchmark runs — and it went through no
+    `_record_stop` at all. `strategies_exhausted` was declared, commented, and
+    never emitted anywhere.
+    """
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: "no tags here, just prose")
+
+    audit = _audit(tmp_path)
+    assert Orchestrator(llm, StopGate(mode="auto"), audit=audit).run(DIFF).status == (
+        STATUS_EXHAUSTED
+    )
+    stops = [e for e in audit.events if e.kind == "anti_loop"]
+    assert len(stops) == 1, "the review loop cut the run short and recorded nothing"
+    assert stops[0].data["stop_reason"] == orch_mod.STOP_STRATEGIES_EXHAUSTED
+    assert stops[0].data["attempts"] == 6  # MAX_ATTEMPTS x len(STRATEGIES)
+
+    # One kind, one schema. A trail reader must not learn two shapes for
+    # `anti_loop` depending on which exit of the same loop produced it.
+    ceiling = _audit(tmp_path)
+    Orchestrator(llm, StopGate(mode="auto"), audit=ceiling,
+                 tracker=AttemptTracker(max_attempts=10**9)).run(DIFF)
+    other = next(e for e in ceiling.events if e.kind == "anti_loop")
+    assert other.data["stop_reason"] == orch_mod.STOP_TOTAL_CAP
+    assert set(stops[0].data) == set(other.data)
+
+
+@pytest.mark.integration
+def test_no_class_jump_is_announced_without_a_strategy_to_jump_to(tmp_path):
+    """The tracker's verdict is not the event; the switch is.
+
+    On the last strategy the tracker still returns `class_jump` — correctly:
+    "no further retries with the same approach". But there is nothing to switch
+    to, so recording a switch files a move that never happened. The verdict is
+    not lost: the tracker's own `attempt` event still carries it.
+    """
+    audit = _audit(tmp_path)
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: "no tags here, just prose")
+    Orchestrator(llm, StopGate(mode="auto"), audit=audit).run(DIFF)
+
+    jumps = [e for e in audit.events if e.kind == "class_jump"]
+    # N strategies means at most N-1 switches between them.
+    assert len(jumps) == len(STRATEGIES) - 1
+    assert not [e for e in jumps if f"'{STRATEGIES[-1]}'" in e.message], (
+        "the final strategy has no successor; no jump away from it can happen"
+    )
+    # The verdict that ended the run is still on the record.
+    assert [e for e in audit.events if e.kind == "attempt" and "class-jump required" in e.message]
