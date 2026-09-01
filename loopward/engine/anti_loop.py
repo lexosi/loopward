@@ -52,8 +52,13 @@ class AttemptOutcome:
     """Verdict for one recorded failure. Only the tracker mints one.
 
     A hand-built ``AttemptOutcome(...)`` raises and the class cannot be
-    subclassed, so the only way to obtain one is
-    :meth:`AttemptTracker.record_failure`.
+    subclassed. Copying a genuine one is not closed off, though: both
+    ``dataclasses.replace`` and ``copy.copy`` carry ``_mint`` over from the
+    original and construct without raising, and ``replace`` can change
+    ``action`` on the way through. Neither copy is registered, so
+    :func:`is_genuine_outcome` rejects both and the orchestrator acts on
+    neither — but constructing one is not the same as minting one, and only
+    the second is closed.
 
     **Not immutable**, and the caveat weighs more here than the matching one on
     ``Approval``. ``frozen=True`` blocks casual assignment, but
@@ -132,7 +137,14 @@ def is_genuine_outcome(outcome: object) -> bool:
 
 
 class AttemptTracker:
-    """Tracks failures per subtask and enforces the class-jump rule.
+    """Tracks failures per subtask and issues the class-jump verdict.
+
+    It issues; it does not enforce — this line used to claim it did, directly
+    contradicting the module docstring above.
+    ``record_failure`` can be called any number of times, always returns, and
+    goes on returning ``class_jump`` forever once the count is past
+    ``max_attempts`` — it refuses nothing. What stops the retrying is
+    ``Orchestrator._review_with_anti_loop``, which owns the loop and its budget.
 
     Parameters
     ----------

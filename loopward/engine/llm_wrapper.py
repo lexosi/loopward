@@ -112,7 +112,9 @@ class LLMClient:
         open work, not a claim this class currently meets.
     fake_script:
         Only for ``provider="fake"``. A list of canned replies or a function
-        ``(messages) -> str``. If omitted, a built-in heuristic replies.
+        ``(messages, task) -> str`` — it is called with both arguments, as
+        :data:`FakeScript` types it and :meth:`_complete_fake` does. If
+        omitted, a built-in heuristic replies.
     """
 
     def __init__(

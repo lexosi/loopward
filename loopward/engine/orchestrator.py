@@ -61,6 +61,26 @@ STOP_STRATEGIES_EXHAUSTED = "strategies_exhausted"  # every strategy was tried
 STOP_TRACKER_BUDGET = "tracker_budget"  # max_attempts x strategies used up
 STOP_TOTAL_CAP = "total_cap"  # MAX_TOTAL_ATTEMPTS reached first
 
+# What the caller is told for each of them. Keyed on the same constant the trail
+# records, so the `result` summary and the `anti_loop` event cannot drift apart:
+# a two-way branch here against three reasons there is how a `tracker_budget`
+# cut-off came to be summarised as "exhausted all strategies", leaving one run
+# telling a reader two different stories. The fallback names an unmapped reason
+# verbatim rather than guessing at one, because a vague sentence that sounds
+# right is the failure this mapping exists to stop.
+_EXHAUSTED_SUMMARY = {
+    STOP_STRATEGIES_EXHAUSTED: (
+        "review exhausted all strategies without parseable findings"
+    ),
+    STOP_TRACKER_BUDGET: (
+        "review stopped when its attempt budget ran out without parseable findings"
+    ),
+    STOP_TOTAL_CAP: (
+        f"review stopped at the absolute ceiling of "
+        f"{MAX_TOTAL_ATTEMPTS} attempts without parseable findings"
+    ),
+}
+
 
 @dataclass(frozen=True)
 class RunResult:
@@ -135,13 +155,10 @@ class Orchestrator:
         findings, strategy, stop_reason = self._review_with_anti_loop(diff)
 
         if findings is None:
-            if stop_reason == STOP_TOTAL_CAP:
-                summary = (
-                    f"review stopped at the absolute ceiling of "
-                    f"{MAX_TOTAL_ATTEMPTS} attempts without parseable findings"
-                )
-            else:
-                summary = "review exhausted all strategies without parseable findings"
+            summary = _EXHAUSTED_SUMMARY.get(
+                stop_reason,
+                f"review stopped without parseable findings ({stop_reason})",
+            )
             self._audit.record("result", summary)
             run_dir = self._record_usage_and_finalize(STATUS_EXHAUSTED, summary)
             return RunResult(STATUS_EXHAUSTED, [], None, str(run_dir), summary)
@@ -346,11 +363,16 @@ class Orchestrator:
           and it went through no ``_record_stop`` at all: the most common
           cut-off was the one the trail said nothing about.
         - :data:`STOP_TRACKER_BUDGET` — the budget ran out before the strategy
-          list did. The anti-loop working as configured. Noted, not fixed:
-          with a genuine :class:`AttemptTracker` the two run out on the same
-          attempt, so this branch is unreachable today. It is kept because
-          ``tracker`` is a public parameter and the invariant is the tracker's,
-          not this loop's.
+          list did. The anti-loop working as configured. An *unmodified*
+          :class:`AttemptTracker` never reaches it: it grants the class-jump on
+          the same attempt the budget runs out, so the strategy list always
+          empties first. A subclass does reach it. One that mints through
+          ``_mint_outcome`` returns genuine verdicts, so a perpetual ``retry``
+          passes the check in :meth:`_record_failure`, the strategy index never
+          advances, and the budget runs out on its own. Reachable, then — this
+          said "unreachable today" and was measured otherwise. Kept, not fixed,
+          because ``tracker`` is a public parameter and the invariant is the
+          tracker's, not this loop's.
         - :data:`STOP_TOTAL_CAP` — the absolute ceiling was reached first: a
           configuration this package refused to honour.
 
@@ -393,11 +415,35 @@ class Orchestrator:
         return reason
 
     def _fold_usage(self) -> None:
-        """Pull accumulated usage from the client into the trail, once."""
-        t = self._llm.totals
-        self._audit.record_usage(
-            prompt=int(t["prompt"]), completion=int(t["completion"]), cost_usd=t["cost_usd"]
-        )
+        """Pull accumulated usage from the client into the trail, once. Never raises.
+
+        ``llm`` is a public constructor parameter, so reading ``totals`` is a
+        call into a caller-supplied object — the one step of both finalize paths
+        that is. It used to be unguarded in both, in two different ways that had
+        the same consequence: outside the ``try`` in
+        :meth:`_record_usage_and_finalize`, and *inside* the one in
+        :meth:`_finalize_crashed` but before the ``finalize()`` it precedes. A
+        broken accounting backend therefore produced no trail at all — the exact
+        failure the crash path exists to prevent, surviving inside the guard
+        that prevents it.
+
+        The guard lives here rather than at the two call sites because the
+        invariant is "folding usage cannot cost you the trail", and stated here
+        it holds for every caller, including the next one. What a failure costs
+        is the token and cost totals: a missing number inside a trail that
+        exists, not a missing trail.
+        """
+        try:
+            t = self._llm.totals
+            self._audit.record_usage(
+                prompt=int(t["prompt"]), completion=int(t["completion"]), cost_usd=t["cost_usd"]
+            )
+        except Exception as exc:
+            print(
+                f"warning: the run's token and cost usage could not be folded into "
+                f"the trail: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
 
     def _record_usage_and_finalize(self, status: str, result: str) -> str:
         """Fold usage in and write the trail. Never raises.

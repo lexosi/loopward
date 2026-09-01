@@ -9,8 +9,9 @@ finalized once with :meth:`AuditLog.finalize`, which writes both files.
 ``Orchestrator.run`` is the only caller of ``finalize``, on every exit path
 including a crash, and calling it twice is refused. A write can still fail
 part-way, leaving the directory reserved or only ``audit.json`` written, so
-:attr:`AuditLog.run_dir_on_disk` reports what actually landed rather than what
-was intended.
+:attr:`AuditLog.run_dir_on_disk` reports whether this run created a directory
+at all, rather than the name it wanted. It does not say which files landed
+inside it.
 
 Design notes
 ------------
@@ -45,7 +46,14 @@ MAX_DIR_COLLISIONS = 100
 
 
 class AuditDirectoryError(RuntimeError):
-    """No free run directory could be reserved. Never raised silently."""
+    """Every candidate run-directory name was already taken.
+
+    Scoped narrowly on purpose. This is the name-collision exhaustion, which
+    earns its own type because refusing to overwrite an existing trail is a
+    decision worth naming. The other reasons a directory cannot be created —
+    permissions, a full disk, a path under a file — are not caught here and
+    surface as the ``OSError`` they already are.
+    """
 
 
 class AuditAlreadyFinalizedError(RuntimeError):

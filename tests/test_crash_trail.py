@@ -205,6 +205,92 @@ def test_f2_handler_that_cannot_write_propagates_the_original(tmp_path, capsys):
     assert "could not be written" in capsys.readouterr().err
 
 
+# --- f3: the work AND the write were fine; folding the usage failed --------
+#
+# `_fold_usage` reads `LLMClient.totals` and hands it to the trail. It is the
+# one step in both finalize paths that touches an injected collaborator, and it
+# sat outside every guard: in `_record_usage_and_finalize` it ran before the
+# `try`, and in `_finalize_crashed` it ran *inside* the try but *before*
+# `finalize()`, so raising there skipped the write it was supposed to precede.
+#
+# Both sites had the same consequence and it is the one B4 exists to prevent:
+# no trail at all. A cost figure that cannot be read is a missing number in a
+# report; it is not a reason to file no report.
+
+
+class _UsageBackendDown(LLMClient):
+    """A client whose accounting is broken but whose completions are fine.
+
+    Contrived only in its narrowness — a `totals` that raises is what a wrapper
+    over a metering service looks like when the service is down, and `llm` is a
+    public constructor parameter.
+    """
+
+    @property
+    def totals(self):
+        raise RuntimeError("usage backend down")
+
+
+@pytest.mark.integration
+def test_f3_usage_that_cannot_be_folded_still_writes_the_trail(tmp_path, capsys):
+    """Site 1 — the normal exit. The run reached a verdict; only the cost did not.
+
+    This is an f1-shaped failure and takes the f1 answer: nothing is raised, the
+    result is reported, and the trail lands. What is lost is the token/cost
+    total, and it is lost *inside* a trail that exists.
+    """
+    audit = AuditLog(run_id="test", base_dir=tmp_path)
+    orch = Orchestrator(
+        _UsageBackendDown(provider="fake", fake_script=_reply),
+        StopGate(mode="auto"),
+        audit=audit,
+    )
+
+    result = orch.run(DIFF)  # must not raise: _record_usage_and_finalize never does
+
+    assert result.status == STATUS_OK
+    assert result.run_dir == str(audit.run_dir)
+    envelope = _trail(result.run_dir)
+    assert envelope["summary"]["status"] == STATUS_OK
+    # The trail is whole except for the number that could not be read.
+    assert envelope["summary"]["tokens"]["total"] == 0
+    assert [e for e in envelope["events"] if e["data"].get("stage") == "verify"]
+    assert "usage" in capsys.readouterr().err
+
+
+@pytest.mark.integration
+def test_f3_a_crashed_run_whose_usage_also_fails_still_writes_the_trail(tmp_path, capsys):
+    """Site 2 — the crash handler. Two failures at once, and the trail survives both.
+
+    The gate dies on EOF (f2) and the usage fold dies too. `_finalize_crashed`
+    must still reach `finalize`, and the caller must still get the EOFError —
+    the thing that actually went wrong — not the accounting failure that
+    happened while recording it.
+    """
+
+    def closed_stdin(phase, summary):
+        raise EOFError("EOF when reading a line")
+
+    audit = AuditLog(run_id="test", base_dir=tmp_path)
+    orch = Orchestrator(
+        _UsageBackendDown(provider="fake", fake_script=_reply),
+        StopGate(mode="interactive", prompter=closed_stdin),
+        audit=audit,
+    )
+
+    with pytest.raises(EOFError):  # the ORIGINAL, not the usage RuntimeError
+        orch.run(DIFF)
+
+    envelope = _trail(audit.run_dir_on_disk)
+    assert envelope["summary"]["status"] == STATUS_CRASHED
+    assert "EOFError" in envelope["summary"]["result"]
+    assert envelope["summary"]["tokens"]["total"] == 0
+    # The findings already paid for are still on the record.
+    review = [e for e in envelope["events"] if e["data"].get("stage") == "review"]
+    assert review and review[0]["data"]["findings"] == [FINDING]
+    assert "usage" in capsys.readouterr().err
+
+
 # --- the ownership rule ----------------------------------------------------
 
 

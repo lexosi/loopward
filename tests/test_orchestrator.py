@@ -6,6 +6,7 @@ import re
 import pytest
 
 from loopward.agents.reviewer import STRATEGIES
+from loopward.engine import anti_loop as anti_loop_mod
 from loopward.engine import orchestrator as orch_mod
 from loopward.engine.anti_loop import AttemptTracker
 from loopward.engine.audit import AuditLog
@@ -346,6 +347,70 @@ def test_strategies_exhausted_is_recorded_like_any_other_cut_off(tmp_path):
     other = next(e for e in ceiling.events if e.kind == "anti_loop")
     assert other.data["stop_reason"] == orch_mod.STOP_TOTAL_CAP
     assert set(stops[0].data) == set(other.data)
+
+
+@pytest.mark.integration
+def test_the_summary_never_contradicts_the_stop_event(tmp_path):
+    """One run, one story. The `result` summary must agree with `anti_loop`.
+
+    `_run` picked its summary with a two-way branch — `total_cap`, or else "every
+    strategy was tried" — while `_record_stop` emits three reasons. So a
+    `tracker_budget` cut-off produced a trail that said "budget exhausted" in one
+    event and "exhausted all strategies" in the next.
+
+    A trail that is merely incomplete leaves the reader knowing less. A trail
+    that contradicts itself leaves them unable to trust either half, which is
+    worse, and it is the failure mode this package is named after.
+
+    `tracker_budget` is reachable: a subclass of `AttemptTracker` that mints
+    through `_mint_outcome` passes the genuineness check with a perpetual
+    `retry`, so the strategy index never advances and the budget runs out first.
+    That branch is not being fixed here — only its description, and this.
+    """
+
+    class NeverJumps(AttemptTracker):
+        """Genuine tracker, genuine verdicts, and it never grants a class-jump."""
+
+        def record_failure(self, subtask_id, strategy):
+            n = self._counts.get(subtask_id, 0) + 1
+            self._counts[subtask_id] = n
+            return anti_loop_mod._mint_outcome(
+                subtask_id, n, anti_loop_mod.RETRY, strategy, "no jump"
+            )
+
+    audit = _audit(tmp_path)
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: "no tags here, just prose")
+    result = Orchestrator(
+        llm, StopGate(mode="auto"), audit=audit, tracker=NeverJumps(max_attempts=4)
+    ).run(DIFF)
+
+    assert result.status == STATUS_EXHAUSTED
+    stop = next(e for e in audit.events if e.kind == "anti_loop")
+    assert stop.data["stop_reason"] == orch_mod.STOP_TRACKER_BUDGET
+    assert stop.data["attempts"] == 8  # 4 attempts x 2 strategies, no jump taken
+
+    # The strategy list was never exhausted — the budget ran out on the first
+    # strategy. Saying otherwise files a cut-off that did not happen.
+    assert "exhausted all strategies" not in result.summary
+    assert "budget" in result.summary
+    # The summary the caller gets and the one in the trail are the same sentence.
+    assert [e for e in audit.events if e.kind == "result"][-1].message == result.summary
+
+
+@pytest.mark.integration
+def test_every_stop_reason_gets_its_own_summary(tmp_path):
+    """The three cut-offs read differently, because they mean different things."""
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: "no tags here, just prose")
+
+    exhausted = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path)).run(DIFF)
+    ceiling = Orchestrator(
+        llm, StopGate(mode="auto"), audit=_audit(tmp_path),
+        tracker=AttemptTracker(max_attempts=10**9),
+    ).run(DIFF)
+
+    assert "every strategy" in exhausted.summary or "all strategies" in exhausted.summary
+    assert str(orch_mod.MAX_TOTAL_ATTEMPTS) in ceiling.summary
+    assert exhausted.summary != ceiling.summary
 
 
 @pytest.mark.integration

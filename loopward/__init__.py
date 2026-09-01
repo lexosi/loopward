@@ -3,7 +3,10 @@
 Three guarantees, enforced structurally (not by convention):
   - anti-loop: stop retrying a failing approach after N attempts; switch
     strategy. The bound is a budget the orchestrator computes before entering
-    its own loop, so no injected collaborator can raise it. The class-jump
+    its own loop, so no injected collaborator can make that loop unbounded or
+    push it past ``MAX_TOTAL_ATTEMPTS`` (100). Within that ceiling a
+    collaborator *can* raise it: the default budget is 3 x 2 = 6 attempts, and
+    a different tracker or strategy list takes it up to 100. The class-jump
     verdict is an AttemptOutcome only the tracker mints, and the orchestrator
     checks that before acting on it — defence in depth, not the bound.
   - stop-gate: pause for human approval between critical phases. Verification

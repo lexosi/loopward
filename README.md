@@ -27,8 +27,9 @@ ceiling — and leave no record of what they decided or what it cost.
   `verify()` can't run without an approval token the gate alone can mint.
 - **Audit trail** — every attempt, gate decision, token, and cost written per run
   to `runs/<timestamp>/audit.{json,md}`. Set `LOOPWARD_APPROVER` to declare who
-  decided (e.g. `ci:github-actions`); otherwise the OS account is recorded, and
-  `approver_source` says which of the two it was.
+  decided (e.g. `ci:github-actions`); otherwise the OS account is recorded, or
+  nothing when the host offers no identity — `approver_source` says which of the
+  three it was (`env` / `os_user` / `unknown`).
 
 ## Quickstart (no API key)
 
@@ -90,9 +91,11 @@ by `isinstance`. Every forgery path is closed within the threat model:
 - a hand-built `Approval(...)`, a subclass, or an `object.__new__(Approval)`
   instance → rejected (not in the registry / subclassing raises).
 
-The anti-loop's hard bound is the orchestrator's bounded loop — a budget
-computed before the loop runs, which no injected collaborator can raise. The
-`AttemptOutcome` verdict is a separate, weaker thing: only
+The anti-loop's hard bound is the orchestrator's bounded loop — a budget computed
+before the loop runs, which no injected collaborator can make unbounded or push
+past `MAX_TOTAL_ATTEMPTS` (100). Within that ceiling a collaborator *can* raise
+it: the default budget is `3 × 2 = 6` attempts. The `AttemptOutcome` verdict is a
+separate, weaker thing: only
 `AttemptTracker.record_failure()` can mint one, and the orchestrator checks that
 before acting on it, but a minted verdict can still be mutated in place through
 `object.__setattr__` and nothing detects it. Defence in depth, not the bound —
