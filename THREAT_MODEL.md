@@ -30,3 +30,22 @@ the in-process half of that lesson.
   `is_genuine_outcome()` still returns True. `Approval` has the same hole, but
   there the mutable field is `phase`, which decides nothing; here `action` is
   the decision. The loop's budget is what makes it survivable.
+- `AttemptOutcome` can also be *constructed* outside the tracker, by two routes
+  that defeat the mint check in different ways. `dataclasses.replace(outcome,
+  action="class_jump")` satisfies it — `replace` re-runs `__init__` and carries
+  `_mint` over from the original, so `__post_init__` sees the real sentinel.
+  `copy.copy` and `copy.deepcopy` bypass it — both rebuild through
+  `__reduce_ex__`, which never calls `__init__` at all. None of the three lands
+  in `_MINTED`, so `is_genuine_outcome()` rejects all of them and the
+  orchestrator acts on none: the gap is the token's forgeability, not an escape
+  from the bound. `Approval` resists all three, and not by luck — it is not a
+  dataclass, so `replace` raises `TypeError`, and `__slots__` makes a copy
+  restore state attribute by attribute, straight into a `__setattr__` that
+  refuses. The hole is in `@dataclass(frozen=True)`, not in the mint pattern.
+- The loop's budget is itself raisable, within a ceiling. `tracker` and
+  `strategies` are public constructor parameters and the budget is
+  `max_attempts * len(strategies)`, so the default `3 × 2 = 6` review attempts
+  become up to `MAX_TOTAL_ATTEMPTS` (100) — measured at exactly 100 from either
+  parameter on its own. The run still always terminates in `EXHAUSTED`; what
+  moves is the spend, by up to ~17x. `MAX_TOTAL_ATTEMPTS` is a spend limit, not
+  a design limit, and it is the one number here no collaborator can raise.
