@@ -54,6 +54,23 @@ lines:
 --- audit trail written to: runs/20260805T101006Z ---
 ```
 
+**What the demo is, on purpose.** It is a fixture, in the same sense as the
+benchmark below. The code paths are the production ones; three of the *inputs*
+are authored rather than observed, and it is worth knowing which:
+
+- **The failure is scripted.** `scripted_reviewer` in
+  [`loopward/demo.py`](loopward/demo.py) returns unparseable prose for the first
+  strategy whatever the prompt says — it never reads the prompt. No model
+  refused. That makes the class-jump fire deterministically and offline; it is
+  not a recording of a model failing, and loopward does not ship one.
+- **The findings are planted.** The sample diff carries two deliberate bugs and
+  the offline `fake` provider matches on exactly those substrings, so it finds
+  what it was written to find.
+- **`rejected 0` is a foregone conclusion.** Both offline fakes confirm every
+  finding by construction. The verifier's false-positive rejection — the other
+  half of what it is for — is exercised in the test suite and in no runnable
+  artifact here.
+
 Review your own diff:
 
 ```bash
@@ -124,7 +141,7 @@ Exercised daily in one personal system; no external users yet.
 
 The number that matters is **categorical, not a ratio**. On a code-review task
 that never converges, loopward has a hard, deterministic ceiling: it stops on its
-own after exactly **6 LLM calls / 927 tokens** and returns `EXHAUSTED` — asserted
+own after exactly **6 LLM calls / 1056 tokens** and returns `EXHAUSTED` — asserted
 at runtime against `MAX_ATTEMPTS × len(STRATEGIES)` (`3 × 2 = 6`), so a core
 change breaks the benchmark loudly instead of reporting a false number. A **naive
 retry loop has no ceiling at all** (`naive_self_terminates: false`) — only a
@@ -135,19 +152,22 @@ labeled as such — illustrative, not the headline:
 
 | K (human kills naive loop at) | naive tokens | loopward | token ratio |
 | --- | --- | --- | --- |
-| 10 | 1340 | 927 | 1.45× |
-| 25 | 3350 | 927 | 3.61× |
-| 50 | 6700 | 927 | 7.23× |
-| 100 | 13400 | 927 | 14.46× |
+| 10 | 1770 | 1056 | 1.68× |
+| 25 | 4425 | 1056 | 4.19× |
+| 50 | 8850 | 1056 | 8.38× |
+| 100 | 17700 | 1056 | 16.76× |
 
-The absolute counts are tiny (927) because this is one small task on the
+The absolute counts are tiny (1056) because this is one small task on the
 deterministic `fake` provider — the benchmark demonstrates the *mechanism*
 (unbounded → bounded), not a large bill.
 
 Token counts are estimated (len//4) and therefore move with prompt length;
 they rose when the diff was wrapped in explicit delimiters to separate
-untrusted input from instructions. The categorical bound — 6 calls,
-MAX_ATTEMPTS x len(STRATEGIES) — is unchanged and is the number that matters.
+untrusted input from instructions, and again when the default `concise`
+strategy was rewritten to actually ask for the severity-tag format the parser
+requires — 927 → 1056 tokens, and every ratio above with them. The categorical
+bound — 6 calls, MAX_ATTEMPTS x len(STRATEGIES) — is unchanged and is the number
+that matters.
 
 Reproduce. The benchmark is not part of the installed package, so this one
 starts from a clone rather than the `pip install` above:

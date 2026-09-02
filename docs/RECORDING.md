@@ -85,6 +85,20 @@ The demo runs on the offline `fake` provider with a scripted reviewer
 (`loopward/demo.py`), so the console output is byte-for-byte reproducible on any
 machine. Only the *presentation* — font, colours, window — is unrecoverable.
 
+**What the script is scripted to do: fail.** `scripted_reviewer` returns
+unparseable prose for the first strategy whatever the prompt says — it routes on
+`task` and never reads the prompt. So the three failed attempts and the
+class-jump in the GIF are authored inputs, not a model that refused. That is
+deliberate, and it is what makes the recording reproducible; but a reader
+watching the GIF is watching the mechanism fire on a fixture, and nothing in the
+frames says so. The same applies to `verify: confirmed 2, rejected 0`: the fake
+confirms everything by construction, so the GIF has never shown — and on this
+script cannot show — a finding being rejected.
+
+Re-recording will not change any of that on its own. Replacing the scripted
+failure with a recorded transcript of a real model is a separate decision, and
+an open one.
+
 ## Unknown — what still needs documenting
 
 Whoever regenerates the GIF should record these, because none of them can be
