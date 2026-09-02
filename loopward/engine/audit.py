@@ -13,6 +13,12 @@ part-way, leaving the directory reserved or only ``audit.json`` written, so
 at all, rather than the name it wanted. It does not say which files landed
 inside it.
 
+The summary also carries ``provider_stop_reasons``: the raw reason each
+provider gave for stopping, one per call, in order. It is written and never
+read back by this package — recorded so a trail reader can tell a truncated or
+refused answer from a complete one, which nothing upstream could do while the
+value was being dropped inside ``llm_wrapper``. Acting on it is separate work.
+
 Design notes
 ------------
 The envelope shape and the token/cost accounting are distilled from a
@@ -39,6 +45,19 @@ def iso_now() -> str:
 def _ts_for_dir() -> str:
     """Filesystem-safe timestamp for the run directory name."""
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _render_stop_reasons(reasons: list[str | None]) -> str:
+    """Render the raw stop reasons for ``audit.md``. Not a summary of them.
+
+    A missing reason renders as ``null`` — the same token ``audit.json`` uses --
+    so the two files name the same thing the same way and neither invents a
+    word for it. The order and the repeats are kept: collapsing them into
+    counts would be this renderer deciding what the reader cares about.
+    """
+    if not reasons:
+        return "(none recorded)"
+    return ", ".join("null" if r is None else str(r) for r in reasons)
 
 
 #: How many ``<ts>-N`` fallbacks to try before giving up on a free run directory.
@@ -111,6 +130,7 @@ class AuditLog:
         self._events: list[AuditEvent] = []
         self._tokens = {"prompt": 0, "completion": 0, "total": 0}
         self._cost_usd = 0.0
+        self._stop_reasons: list[str | None] = []
 
     @property
     def run_dir(self) -> Path:
@@ -163,6 +183,29 @@ class AuditLog:
         self._tokens["total"] += prompt + completion
         self._cost_usd += cost_usd
 
+    def record_provider_stop_reasons(self, reasons: list[str | None]) -> None:
+        """Take the run's raw provider stop reasons, in call order.
+
+        Named for the provider throughout — method, envelope key, and rendered
+        label — because the trail already had a `stop_reason`: the `anti_loop`
+        event's, which says why the *review loop* cut itself short. The two are
+        unrelated and one of them is not going to be renamed, since tests and
+        readers depend on it. Two different things under one word in one file is
+        the ambiguity this package keeps closing elsewhere.
+
+        A sibling of :meth:`record_usage`, and deliberately as dumb as it is:
+        the strings are stored exactly as the provider sent them, nothing is
+        counted, mapped, or de-duplicated here. The envelope reports them and
+        no code in this package reads them back.
+
+        Landing in the summary rather than as events is the point. An event per
+        call would add one line per LLM call to every run's trail — and any rule
+        for emitting *some* of them ("only the unusual ones") would first have to
+        decide which values are unusual, which is the mapping decision this
+        change exists to defer.
+        """
+        self._stop_reasons.extend(reasons)
+
     def summary(self, status: str, result: Any) -> dict[str, Any]:
         """Build the run summary envelope (without writing it)."""
         return {
@@ -172,6 +215,10 @@ class AuditLog:
             "ended_at": iso_now(),
             "tokens": dict(self._tokens),
             "cost_usd": round(self._cost_usd, 6),
+            # Raw, ordered, unnormalised; `null` where the provider reported
+            # nothing (always so for `fake`). Can be longer than the call count
+            # — see `LLMClient.stop_reasons`.
+            "provider_stop_reasons": list(self._stop_reasons),
             "event_count": len(self._events),
             "result": result,
         }
@@ -238,6 +285,8 @@ class AuditLog:
             f"- **tokens**: {summary['tokens']['total']} "
             f"(prompt {summary['tokens']['prompt']}, completion {summary['tokens']['completion']})",
             f"- **cost_usd**: {summary['cost_usd']:.6f}",
+            f"- **provider_stop_reasons**: "
+            f"{_render_stop_reasons(summary['provider_stop_reasons'])}",
             "",
             "## Events",
             "",

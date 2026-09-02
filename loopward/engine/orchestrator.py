@@ -13,7 +13,9 @@ Runs a code-review as two phases with reliability baked in:
    approves before the Verifier re-checks the findings.
 
 Everything — every attempt, gate decision, and token cost — lands in the
-:class:`AuditLog`. The orchestrator is the only component that calls agents;
+:class:`AuditLog`, along with the raw reason each provider gave for stopping.
+That last one is carried and recorded, never consulted: no branch in this
+module reads it. The orchestrator is the only component that calls agents;
 agents never call each other.
 
 All collaborators are injected, so the whole flow runs offline and is trivial to
@@ -445,6 +447,30 @@ class Orchestrator:
                 file=sys.stderr,
             )
 
+    def _fold_provider_stop_reasons(self) -> None:
+        """Pull the run's raw provider stop reasons into the trail, once. Never raises.
+
+        A sibling of :meth:`_fold_usage` rather than a branch inside it, and
+        separate for the same reason the guard exists at all: ``llm`` is a public
+        constructor parameter, so both reads are calls into a caller-supplied
+        object, and one of them failing must not cost the other. A wrapper whose
+        accounting backend is down still yields its stop reasons, and vice
+        versa. What a failure here costs is the reasons — inside a trail that
+        exists, with its token totals intact.
+
+        Both fold sites call this, including the crash path, which is where it
+        earns its keep: a run that ended because the provider truncated or
+        refused is exactly the run whose trail would otherwise not say so.
+        """
+        try:
+            self._audit.record_provider_stop_reasons(self._llm.stop_reasons)
+        except Exception as exc:
+            print(
+                f"warning: the run's provider stop reasons could not be folded "
+                f"into the trail: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+
     def _record_usage_and_finalize(self, status: str, result: str) -> str:
         """Fold usage in and write the trail. Never raises.
 
@@ -467,6 +493,7 @@ class Orchestrator:
         avoid. Reuse itself is not fixed here; the path stops lying about it.
         """
         self._fold_usage()
+        self._fold_provider_stop_reasons()
         try:
             return str(self._audit.finalize(status, result))
         except Exception as exc:
@@ -506,6 +533,7 @@ class Orchestrator:
                 ),
             )
             self._fold_usage()
+            self._fold_provider_stop_reasons()
             self._audit.finalize(STATUS_CRASHED, summary)
         except Exception as write_exc:
             print(

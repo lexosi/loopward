@@ -13,6 +13,12 @@ read from the environment only — never hardcoded, never passed positionally.
 
 Token accounting and the empty-response guard are distilled from a production
 wrapper: a blank completion raises loudly instead of silently returning "".
+
+The provider's own reason for stopping travels with the reply. Both real
+providers report one — Anthropic as ``stop_reason``, OpenAI-compatible ones as
+``finish_reason`` — and both used to be discarded here, which made a truncated
+answer indistinguishable from a complete one anywhere upstream. It is carried
+**raw and unnormalised**; see :attr:`LLMResponse.stop_reason`.
 """
 
 from __future__ import annotations
@@ -51,7 +57,7 @@ DEFAULT_MODEL: dict[str, str] = {
 #: The caller's declared intent for a completion, passed OUT OF BAND: it never
 #: enters the message payload, because real providers reject unknown keys. The
 #: fake routes on this and must never sniff the prompt text to work out what it
-#: is being asked -- reword a prompt and text-sniffing fails silently, which is
+#: is being asked — reword a prompt and text-sniffing fails silently, which is
 #: the failure this constant exists to prevent.
 TASK_REVIEW = "review"  # the Reviewer sends f"{TASK_REVIEW}:{strategy}"
 TASK_VERIFY = "verify"
@@ -74,6 +80,26 @@ class LLMResponse:
     prompt_tokens: int
     completion_tokens: int
     cost_usd: float
+    #: Why the provider stopped generating, **verbatim and unnormalised**:
+    #: Anthropic's ``stop_reason`` (``end_turn``, ``max_tokens``, ``refusal``,
+    #: ``model_context_window_exceeded``, ...) or an OpenAI-compatible
+    #: ``finish_reason`` (``stop``, ``length``, ``content_filter``, ...).
+    #:
+    #: Not translated into a common vocabulary, on purpose. The two sets are
+    #: not in one-to-one correspondence — ``refusal`` has no OpenAI counterpart
+    #: and ``content_filter`` has no Anthropic one — so deciding that
+    #: ``length`` and ``max_tokens`` are the same thing is a mapping decision,
+    #: not a transport one. The raw strings happen to be disjoint between the
+    #: two vocabularies, so a value identifies its own provider; :attr:`provider`
+    #: is in this same object either way.
+    #:
+    #: ``None`` when the provider reported nothing: the ``fake`` provider always
+    #: (it does not know why it stopped, and saying ``end_turn`` would be it
+    #: asserting something it cannot know), and a real provider on an SDK version
+    #: predating the field — see :meth:`_complete_claude`.
+    #:
+    #: **Nothing branches on this.** It is recorded, not consulted.
+    stop_reason: str | None = None
 
 
 def _estimate_tokens(text: str) -> int:
@@ -131,11 +157,30 @@ class LLMClient:
         self._fake_calls = 0
         self._client = None  # lazily constructed for real providers
         self._totals = {"prompt": 0, "completion": 0, "cost_usd": 0.0, "calls": 0}
+        self._stop_reasons: list[str | None] = []
 
     @property
     def totals(self) -> dict[str, float]:
         """Accumulated usage across all calls: prompt, completion, cost_usd, calls."""
         return dict(self._totals)
+
+    @property
+    def stop_reasons(self) -> list[str | None]:
+        """Every call's raw stop reason, in call order. A copy; never the list itself.
+
+        Ordered rather than counted or de-duplicated, because a count is already
+        a summary and a set loses how many. A reader lining this up against the
+        trail's attempt events can tell *which* call truncated, not just that one
+        did.
+
+        It can be **longer** than ``totals["calls"]``, and the gap is meaningful:
+        a reason is recorded before the blank-content guard in :meth:`complete`,
+        while ``calls`` is incremented after it. So a provider that truncates at
+        zero tokens contributes a ``max_tokens`` here and nothing there — which
+        is precisely the case that must not go unrecorded, since it raises
+        :class:`EmptyCompletionError` and ends the run.
+        """
+        return list(self._stop_reasons)
 
     # ---- public API -------------------------------------------------------
 
@@ -147,11 +192,19 @@ class LLMClient:
         it, which is why it is a keyword argument and not a message field.
         """
         if self.provider == "fake":
-            text = self._complete_fake(messages, task)
+            text, stop_reason = self._complete_fake(messages, task)
         elif self.provider == "deepseek":
-            text = self._complete_deepseek(messages)
+            text, stop_reason = self._complete_deepseek(messages)
         else:
-            text = self._complete_claude(messages)
+            text, stop_reason = self._complete_claude(messages)
+
+        # Recorded BEFORE the blank-content guard, deliberately. A provider that
+        # truncates at zero tokens reports `max_tokens` and returns "", and that
+        # pair is the most informative thing this method ever sees — it is also
+        # the one that ends the run. Recording it after the raise would lose it
+        # exactly when it matters. `_totals` stays where it was, below the guard,
+        # so no counter moves; `stop_reasons` documents the asymmetry.
+        self._stop_reasons.append(stop_reason)
 
         if not text or not text.strip():
             raise EmptyCompletionError(
@@ -172,22 +225,44 @@ class LLMClient:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_usd=cost,
+            stop_reason=stop_reason,
         )
 
     # ---- providers --------------------------------------------------------
 
-    def _complete_fake(self, messages: list[Message], task: str | None) -> str:
+    def _complete_fake(self, messages: list[Message], task: str | None) -> tuple[str, None]:
+        """Reply plus a stop reason that is always ``None``.
+
+        The fake does not know why it stopped, so it says so. Reporting
+        ``end_turn`` would be the offline provider asserting a fact only a real
+        one can establish. Widening :data:`FakeScript` so a script *can* express
+        a truncation is separate, open work; it stays ``-> str`` here.
+        """
         self._fake_calls += 1
         script = self._fake_script
         if script is None:
-            return _fake_heuristic(messages, task)
+            return _fake_heuristic(messages, task), None
         if callable(script):
-            return script(messages, task)
+            return script(messages, task), None
         # sequence: consume in order, clamp to last when exhausted
         idx = min(self._fake_calls - 1, len(script) - 1)
-        return script[idx]
+        return script[idx], None
 
-    def _complete_deepseek(self, messages: list[Message]) -> str:
+    def _complete_deepseek(self, messages: list[Message]) -> tuple[str, str | None]:
+        """Reply plus the OpenAI-compatible ``finish_reason``, read defensively.
+
+        ``getattr`` rather than attribute access, for two independent reasons.
+        ``pyproject`` floors the extra at ``openai>=1.40``, so the field can be
+        absent on an older client object; and the value on the wire comes from
+        DeepSeek's server, not from the SDK's type — ``finish_reason`` is typed
+        as a required ``Literal`` in ``openai``, which states what OpenAI sends,
+        not what an OpenAI-*compatible* endpoint does.
+
+        The SDK never raises on it. ``LengthFinishReasonError`` and
+        ``ContentFilterFinishReasonError`` exist, but only the ``.parse()`` and
+        streaming helpers raise them; the plain ``create()`` below returns a
+        truncated reply with ``finish_reason="length"`` and HTTP 200.
+        """
         if self._client is None:
             from openai import OpenAI  # lazy: optional dependency
 
@@ -196,9 +271,25 @@ class LLMClient:
                 raise RuntimeError("DEEPSEEK_API_KEY not set (provider=deepseek)")
             self._client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         resp = self._client.chat.completions.create(model=self.model, messages=messages)
-        return resp.choices[0].message.content or ""
+        choice = resp.choices[0]
+        return choice.message.content or "", getattr(choice, "finish_reason", None)
 
-    def _complete_claude(self, messages: list[Message]) -> str:
+    def _complete_claude(self, messages: list[Message]) -> tuple[str, str | None]:
+        """Reply plus Anthropic's ``stop_reason``, read defensively.
+
+        ``getattr`` because ``pyproject`` floors the extra at ``anthropic>=0.39``
+        and the value set has grown since: ``model_context_window_exceeded`` is
+        in the ``StopReason`` literal of the SDK this repo runs against (1.1.0)
+        and arrives as **HTTP 200**, not the 400 a context-length failure is
+        usually assumed to be. Nothing here matches on the value, so a member
+        added by a future version travels through untouched — which is the
+        point of carrying the string raw.
+
+        Not read: ``stop_details``, the structured refusal category. It is
+        populated only when ``stop_reason == "refusal"`` and is GA from Opus 4.7
+        onward, while this client's default Claude model is ``claude-haiku-4-5``.
+        Open work, not an omission.
+        """
         if self._client is None:
             import anthropic  # lazy: optional dependency
 
@@ -211,7 +302,8 @@ class LLMClient:
         resp = self._client.messages.create(
             model=self.model, max_tokens=4096, system=system or None, messages=convo
         )
-        return "".join(block.text for block in resp.content if block.type == "text")
+        text = "".join(block.text for block in resp.content if block.type == "text")
+        return text, getattr(resp, "stop_reason", None)
 
 
 def _fake_heuristic(messages: list[Message], task: str | None = None) -> str:
