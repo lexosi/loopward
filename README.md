@@ -6,10 +6,14 @@
 and a per-run audit trail — enforced structurally, not by convention. Runs
 **offline with zero API keys** out of the box.
 
-![loopward demo — anti-loop class-jump, stop-gate, audit trail](docs/demo.gif)
+![loopward demo — anti-loop class-jump, stop-gate, audit trail](https://raw.githubusercontent.com/lexosi/loopward/main/docs/demo.gif)
 
-*Illustrative. See [docs/RECORDING.md](docs/RECORDING.md) for how this is
-produced and what it does not currently show.*
+*Illustrative, and currently one event behind the tool: the GIF shows 9 events,
+`loopward-demo` now prints 10 — the extra line is the stop-gate's own event,
+`[gate] phase 'verify' [auto] -> approve (auto-approved)`, added after the GIF
+was recorded. See
+[docs/RECORDING.md](https://github.com/lexosi/loopward/blob/main/docs/RECORDING.md)
+for the full account.*
 
 ## The problem
 
@@ -59,7 +63,7 @@ benchmark below. The code paths are the production ones; three of the *inputs*
 are authored rather than observed, and it is worth knowing which:
 
 - **The failure is scripted.** `scripted_reviewer` in
-  [`loopward/demo.py`](loopward/demo.py) returns unparseable prose for the first
+  [`loopward/demo.py`](https://github.com/lexosi/loopward/blob/main/loopward/demo.py) returns unparseable prose for the first
   strategy whatever the prompt says — it never reads the prompt. No model
   refused. That makes the class-jump fire deterministically and offline; it is
   not a recording of a model failing, and loopward does not ship one.
@@ -118,18 +122,18 @@ separate, weaker thing: only
 `AttemptTracker.record_failure()` can mint one, and the orchestrator checks that
 before acting on it, but a minted verdict can still be mutated in place through
 `object.__setattr__` and nothing detects it. Defence in depth, not the bound —
-see [THREAT_MODEL.md](THREAT_MODEL.md). [`tests/test_no_evasion.py`][evade]
+see [THREAT_MODEL.md](https://github.com/lexosi/loopward/blob/main/THREAT_MODEL.md). [`tests/test_no_evasion.py`][evade]
 re-runs every forgery attempt and asserts each is rejected — that's the proof.
 
-[evade]: tests/test_no_evasion.py
+[evade]: https://github.com/lexosi/loopward/blob/main/tests/test_no_evasion.py
 
-See [THREAT_MODEL.md](THREAT_MODEL.md) for what this does and does not defend against.
+See [THREAT_MODEL.md](https://github.com/lexosi/loopward/blob/main/THREAT_MODEL.md) for what this does and does not defend against.
 
 ### Retries are blind, and the ladder is why
 
 Every attempt is built clean. The orchestrator hands the reviewer the same diff
 and the reviewer reconstructs the prompt from scratch each time
-([`reviewer.py`](loopward/agents/reviewer.py) rebuilds the two messages per call);
+([`reviewer.py`](https://github.com/lexosi/loopward/blob/main/loopward/agents/reviewer.py) rebuilds the two messages per call);
 nothing carries over between attempts but the running token and cost totals. There
 is no accumulated conversation to prune, and loopward does not claim to manage one.
 
@@ -153,7 +157,7 @@ worse answer.
 failure no prompt can prevent is the diff not fitting the model's context window.
 This path exists **for the `claude` provider only**: the failure map that
 recognises a context-window rejection is gated to Anthropic
-([`failure_classifier.py`](loopward/engine/failure_classifier.py)). When a
+([`failure_classifier.py`](https://github.com/lexosi/loopward/blob/main/loopward/engine/failure_classifier.py)). When a
 `claude` run's whole-diff review is refused for length, loopward does not retry —
 it splits the diff and reviews it one file at a time. Any other provider's
 overflow classifies as `UNKNOWN` and **crashes** the run; there is no chunked
@@ -317,4 +321,4 @@ ruff check .
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/lexosi/loopward/blob/main/LICENSE).

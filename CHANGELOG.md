@@ -4,6 +4,10 @@ All notable changes to loopward are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims
 to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+_A note on the history: commit messages are in Spanish between 2026-08-26 and
+2026-09-02, and in English before and after. Older commits are dated evidence
+and are not rewritten._
+
 ## [0.1.0] - 2026-09-09
 
 First beta. A reliability layer for multi-agent LLM systems that runs offline
