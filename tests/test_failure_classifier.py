@@ -298,7 +298,8 @@ def test_an_unknown_failure_leaves_its_raw_signal_in_the_trail(tmp_path):
 def test_the_measured_failure_now_routes_to_a_per_file_review(tmp_path):
     """The measured class is CONSUMED here: it reviews the diff a file at a time.
 
-    C3 is where the map's one destination is finally acted on. A context-length
+    The review loop's capture point is where the map's one destination is finally
+    acted on. A context-length
     400 on the whole-diff review no longer crashes; it splits the diff and
     reviews each file separately, ending in ``partial_review`` — not ``ok`` (a
     per-file review cannot see a cross-file defect), not ``crashed``.

@@ -49,3 +49,29 @@ the in-process half of that lesson.
   parameter on its own. The run still always terminates in `EXHAUSTED`; what
   moves is the spend, by up to ~17x. `MAX_TOTAL_ATTEMPTS` is a spend limit, not
   a design limit, and it is the one number here no collaborator can raise.
+- A run that overflows the context window has a **second, additive** spend
+  ceiling, not folded under the one above:
+  `MAX_ATTEMPTS × (len(STRATEGIES) − 1) + 1 + MAX_CHUNKS + MAX_ATTEMPTS`
+  (`3 × 1 + 1 + 10 + 3 = 17` provider calls), measured and asserted by the
+  benchmark against the formula derived from the constants. The whole-diff term is
+  not 1: the strategies differ in prompt length, so a diff can fit an earlier
+  strategy and overflow a later one, and every earlier strategy can parse-fail its
+  whole budget before the overflow. The `MAX_CHUNKS` term is a separate budget, and
+  `MAX_TOTAL_ATTEMPTS` does not cap it.
+
+**Coverage, not just spend — the one gap `partial_review` names (Anthropic only).**
+The chunked review exists **only for the `claude` provider**: the failure map that
+recognises a context-window rejection is gated to Anthropic, so another provider's
+overflow classifies `UNKNOWN` and crashes rather than chunking. When a `claude` run
+*does* review a file at a time, a defect that **spans two files** is invisible to
+every per-file review. The run says so: it ends in `partial_review`, not `ok`, and
+the trail records the blind spot. This is a correctness limitation, stated rather
+than smoothed over — loopward does not claim a chunked review is a complete one.
+
+**A design decision with a cost: retries are blind.** Each attempt reconstructs
+the prompt from scratch; nothing carries between attempts but token and cost
+totals, so there is no accumulated context to manage. An *informed* retry (feeding
+the previous answer back) could converge sooner, but it risks suppressing the part
+of the answer that was already correct. loopward chooses the clean retry —
+bounded, reproducible, and unable to argue itself into a worse answer. It is a
+trade, not an oversight.

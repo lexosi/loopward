@@ -123,6 +123,56 @@ re-runs every forgery attempt and asserts each is rejected — that's the proof.
 
 See [THREAT_MODEL.md](THREAT_MODEL.md) for what this does and does not defend against.
 
+### Retries are blind, and the ladder is why
+
+Every attempt is built clean. The orchestrator hands the reviewer the same diff
+and the reviewer reconstructs the prompt from scratch each time
+([`reviewer.py`](loopward/agents/reviewer.py) rebuilds the two messages per call);
+nothing carries over between attempts but the running token and cost totals. There
+is no accumulated conversation to prune, and loopward does not claim to manage one.
+
+That is the whole argument for the strategy ladder. If three clean attempts at the
+same prompt fail, a fourth clean attempt is not unlucky — the prompt is the
+problem, and reshaping it is the only move left. So after `MAX_ATTEMPTS` the loop
+stops retrying and **class-jumps** to the next strategy. The built-in ladder is
+`concise → structured`: two shapes of one prompt for the same output contract, not
+two different kinds of attack. (A genuinely different *mechanism* — the per-file
+review below — is reached by a different path, a measured failure class, not by
+this counter.)
+
+This is a **decision with a cost**, not a free win. A blind retry cannot converge
+on what the last attempt nearly got right, because it never sees the last attempt.
+An *informed* retry — feeding the previous answer back — might converge sooner, but
+it risks suppressing the part of the response that was already correct. loopward
+chooses the clean retry: bounded, reproducible, and unable to talk itself into a
+worse answer.
+
+**The context-window overflow, and `partial_review` (Anthropic only).** One
+failure no prompt can prevent is the diff not fitting the model's context window.
+This path exists **for the `claude` provider only**: the failure map that
+recognises a context-window rejection is gated to Anthropic
+([`failure_classifier.py`](loopward/engine/failure_classifier.py)). When a
+`claude` run's whole-diff review is refused for length, loopward does not retry —
+it splits the diff and reviews it one file at a time. Any other provider's
+overflow classifies as `UNKNOWN` and **crashes** the run; there is no chunked
+fallback for it. A chunked run ends in its own status, **`partial_review`**, never
+`ok`: a per-file review structurally cannot see a defect that spans two files, and
+returning `ok` would certify coverage that never happened. The audit trail records
+the mechanism (how many pieces, which were unreadable, and the cross-file blind
+spot); the status carries only the consequence.
+
+**Two limits crash by design, and say why.** The split refuses two inputs rather
+than paper over them, and both reach the crash trail with their cause:
+
+- a diff with **no usable file header** — there is no boundary to split on, so
+  `split_diff` raises instead of handing back "zero files to review";
+- **more than `MAX_CHUNKS` (10) files** — refused whole, with the file count it
+  saw and the cap it exceeded on the trail. That is what separates a declared limit
+  from a silent truncation.
+
+Neither becomes `partial_review`: a run that reviewed *nothing* must not report a
+partial review of something.
+
 ## Status
 
 **v0.1, beta.** The public API (`loopward.Orchestrator`) is small and the mechanism
@@ -146,6 +196,27 @@ at runtime against `MAX_ATTEMPTS × len(STRATEGIES)` (`3 × 2 = 6`), so a core
 change breaks the benchmark loudly instead of reporting a false number. A **naive
 retry loop has no ceiling at all** (`naive_self_terminates: false`) — only a
 human or a timeout stops it.
+
+There is a **second** ceiling, separate and additive. A diff that overflows the
+context window (Anthropic only) is not retried — it is reviewed one file at a time
+(see [Retries are blind, and the ladder is why](#retries-are-blind-and-the-ladder-is-why)).
+That chunked path has its own measured bound:
+
+- **17 provider calls**, `MAX_ATTEMPTS × (len(STRATEGIES) − 1) + 1 + MAX_CHUNKS +
+  MAX_ATTEMPTS` = `3 × 1 + 1 + 10 + 3`. The whole-diff term is **not** 1: the
+  strategies have different prompt lengths (`structured` is longer than `concise`),
+  so a diff can fit one strategy and overflow the next. In the worst case every
+  earlier strategy parse-fails its full budget and class-jumps, and only the last
+  strategy overflows and triggers the split — then one review per file-piece (up to
+  `MAX_CHUNKS`) and the verify loop's own budget. `MAX_CHUNKS` is **not** folded
+  under the 6-call bound above or under `MAX_TOTAL_ATTEMPTS`; it is a separate term.
+  The benchmark measures this worst case by running it and asserts the count
+  against the formula **derived from the constants** — add a strategy and the
+  number moves on its own.
+- A chunked run that *reaches a verdict* (verify confirms) costs **15** provider
+  calls and ends in `partial_review`, not `ok`: a per-file review cannot see a
+  defect that spans two files, so the status refuses to certify coverage that did
+  not happen.
 
 The token *ratio* depends on **when a human kills the naive loop** (`K`), so it is
 labeled as such — illustrative, not the headline:

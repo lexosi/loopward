@@ -189,7 +189,7 @@ def test_claude_stop_reason_read_defensively(monkeypatch):
     """`pyproject` floors the extra at anthropic>=0.39; the field may not exist.
 
     A response object without `stop_reason` must yield None, not AttributeError.
-    The SDK the repo runs against (1.1.0) grew `model_context_window_exceeded`
+    The SDK the repo runs against (1.4.0) grew `model_context_window_exceeded`
     since that floor, so "the field is there and its values are known" is not
     something this wrapper may assume.
     """

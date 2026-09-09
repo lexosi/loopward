@@ -203,8 +203,8 @@ def extract_signal(exc: BaseException, provider: str | None = None) -> WireSigna
     ``provider`` is passed in rather than sniffed: ``"invalid_request_error"`` is
     shared across providers, so the exception alone cannot say whose 400 it is,
     and the unstable exception class cannot be trusted to reveal it either. The
-    caller — the crash handler now, unit 3's upstream capture point later — knows
-    it from ``LLMClient.provider``. It is a datum, not a handle on the caller.
+    caller — the crash handler and the review loop's upstream capture point —
+    knows it from ``LLMClient.provider``. It is a datum, not a handle on the caller.
 
     Every field it could not resolve is named in :attr:`WireSignal.unresolved`,
     so a malformed exception leaves a trace of *what* was unreadable instead of a

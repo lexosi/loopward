@@ -633,7 +633,7 @@ class Orchestrator:
             return
         summary = f"run crashed: {type(exc).__name__}: {exc}"
         # Classify by WIRE SIGNAL, not by exception class — the class is not
-        # stable across SDK versions (see failure_classifier). This unit only
+        # stable across SDK versions (see failure_classifier). This path only
         # records: `_finalize_crashed` re-raises whatever it got, so a known
         # class changes nothing here and the map's destination is not acted on.
         # For an UNKNOWN, the raw signal is what makes the repo able to say,

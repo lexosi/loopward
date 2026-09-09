@@ -1,7 +1,7 @@
-"""C3 — a context-length overflow reviews the diff a file at a time.
+"""A context-length overflow reviews the diff a file at a time.
 
 The map in ``engine.failure_classifier`` declares ``context_length_exceeded ->
-chunk-diff``. C3 is where that map is finally *consumed*: an upstream capture
+chunk-diff``. This is where that map is finally *consumed*: an upstream capture
 point in the orchestrator catches the wire failure, classifies it by SIGNAL
 (never by exception class), and — for the one mapped class — reviews the diff
 one file per piece instead of letting the 400 kill the run.

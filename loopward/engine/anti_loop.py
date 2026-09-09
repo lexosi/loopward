@@ -1,9 +1,17 @@
 """anti_loop.py — stop retrying a losing approach.
 
 The rule: a single subtask may be attempted at most ``MAX_ATTEMPTS`` times with
-the *same class of approach*. On the next failure the tracker returns a
-**class-jump** verdict — the instruction to switch to a materially different
-strategy.
+the *same* approach. On the next failure the tracker returns a **class-jump**
+verdict — the instruction to stop retrying this approach and move on to the next
+one in the ordered strategy list.
+
+Whether "the next one" is a *materially* different approach depends on the list,
+and for the built-in review strategies it is not: ``concise`` and ``structured``
+are two shapes of one prompt for the same output contract, not two different
+kinds of attack. A genuinely different mechanism — reviewing the diff a file at a
+time — is reached by a separate path: a measured failure class routes there (see
+``engine.failure_classifier``), never this counter. The tracker bounds repetition
+of one approach; it does not itself decide what the next approach is.
 
 The tracker issues verdicts; it does not enforce them. ``record_failure`` can be
 called any number of times and always returns successfully. What actually stops

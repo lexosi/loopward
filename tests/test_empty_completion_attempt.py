@@ -1,12 +1,13 @@
-"""C3 — an empty completion consumes an attempt instead of crossing the loop.
+"""An empty completion consumes an attempt instead of crossing the loop.
 
 ``EmptyCompletionError`` is raised by ``LLMClient.complete`` on blank content.
-Until C3 it was neither a ``ReviewParseError`` nor a ``VerifyParseError``, so the
-anti-loop's ``except`` clauses did not catch it: it crossed the loop without ever
-touching the attempt counter and crashed the run. That is a confirmed defect — a
-blank reply is a failed attempt, the same as an unparseable one.
+It is neither a ``ReviewParseError`` nor a ``VerifyParseError``, so before this
+was fixed the anti-loop's ``except`` clauses did not catch it: it crossed the
+loop without ever touching the attempt counter and crashed the run. That was a
+confirmed defect — a blank reply is a failed attempt, the same as an unparseable
+one.
 
-C3 catches it in BOTH loops (review and verify), symmetric with the parse
+The fix catches it in BOTH loops (review and verify), symmetric with the parse
 errors: it consumes an attempt, is recorded, and drives the same class-jump /
 exhaustion machinery. Catching it in review only would leave the verify sibling
 alive.
@@ -30,9 +31,9 @@ def _audit(tmp):
 def test_empty_review_completion_consumes_attempts_and_exhausts(tmp_path):
     """A blank review reply is a failed attempt, not a crash.
 
-    Today the EmptyCompletionError propagates and the run raises. After C3 it is
-    consumed as an attempt across both strategies and the run terminates
-    EXHAUSTED, having recorded the attempts.
+    Without the fix the EmptyCompletionError propagates and the run raises. With
+    it, the error is consumed as an attempt across both strategies and the run
+    terminates EXHAUSTED, having recorded the attempts.
     """
     audit = _audit(tmp_path)
     llm = LLMClient(provider="fake", fake_script=lambda m, task: "")
@@ -50,8 +51,9 @@ def test_empty_review_completion_consumes_attempts_and_exhausts(tmp_path):
 def test_empty_verify_completion_consumes_attempts_and_exhausts(tmp_path):
     """Same defect on the verify loop: a blank adjudication is a failed attempt.
 
-    Review parses; verify returns blank. Today that crashes; after C3 the verify
-    loop consumes attempts and returns no usable adjudication -> EXHAUSTED.
+    Review parses; verify returns blank. Without the fix that crashes; with it
+    the verify loop consumes attempts and returns no usable adjudication ->
+    EXHAUSTED.
     """
 
     def reply(messages, task):

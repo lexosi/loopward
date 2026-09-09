@@ -279,7 +279,7 @@ class LLMClient:
 
         ``getattr`` because ``pyproject`` floors the extra at ``anthropic>=0.39``
         and the value set has grown since: ``model_context_window_exceeded`` is
-        in the ``StopReason`` literal of the SDK this repo runs against (1.1.0)
+        in the ``StopReason`` literal of the SDK this repo runs against (1.4.0)
         and arrives as **HTTP 200**, not the 400 a context-length failure is
         usually assumed to be. Nothing here matches on the value, so a member
         added by a future version travels through untouched — which is the
