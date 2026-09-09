@@ -297,7 +297,7 @@ client = LLMClient(
     model="deepseek-v4-flash",
     rates={
         ("deepseek", "deepseek-v4-flash"): {"prompt": 0.14, "completion": 0.28},
-        ("deepseek", "deepseek-v4-pro"):   {"prompt": 0.435, "completion": 0.87},
+        ("deepseek", "deepseek-v4-pro"): {"prompt": 0.435, "completion": 0.87},
     },
     rates_label="my rates, checked 2026-08-01",  # free text; loopward never parses it
 )
