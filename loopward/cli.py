@@ -2,6 +2,11 @@
 
 Runs a code-review over a diff file with the reliability engine wired up.
 Defaults to the offline ``fake`` provider so it works with no API key.
+
+A bad diff argument — missing, or present but unreadable as UTF-8 text — is
+rejected here, before any run exists, so it correctly leaves no audit trail:
+the guarantee is not that every invocation writes one, but that no run ever
+ends without it.
 """
 
 from __future__ import annotations
@@ -83,7 +88,19 @@ def main(argv: list[str] | None = None) -> int:
     if not args.diff.exists():
         print(f"error: diff file not found: {args.diff}", file=sys.stderr)
         return 2
-    diff = args.diff.read_text(encoding="utf-8")
+    try:
+        diff = args.diff.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError) as exc:
+        # Same category as "not found": the diff argument yields no usable diff,
+        # detected before any run or trail exists. UnicodeDecodeError (non-UTF-8
+        # bytes) and OSError (a directory, a permission failure, a file removed
+        # after the exists() check) both mean "cannot read this diff" — reported
+        # with the shape of the not-found error, exit code 2, and no traceback.
+        # Decoding errors are surfaced, never repaired: errors="replace" or
+        # sniffing an encoding would turn an unreadable input into a silently
+        # different diff, which is worse than refusing it.
+        print(f"error: could not read diff file: {args.diff}: {exc}", file=sys.stderr)
+        return 2
 
     model = args.model or DEFAULT_MODEL[args.provider]
     llm = LLMClient(provider=args.provider, model=model)

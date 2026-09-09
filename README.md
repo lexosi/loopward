@@ -123,7 +123,9 @@ separate, weaker thing: only
 before acting on it, but a minted verdict can still be mutated in place through
 `object.__setattr__` and nothing detects it. Defence in depth, not the bound —
 see [THREAT_MODEL.md](https://github.com/lexosi/loopward/blob/main/THREAT_MODEL.md). [`tests/test_no_evasion.py`][evade]
-re-runs every forgery attempt and asserts each is rejected — that's the proof.
+re-runs every forgery path in scope — identity, subclass, replay, cross-phase —
+and asserts each is rejected; in-process mutation via `object.__setattr__` is a
+documented non-defense (see THREAT_MODEL.md), not a covered case. That's the proof.
 
 [evade]: https://github.com/lexosi/loopward/blob/main/tests/test_no_evasion.py
 
