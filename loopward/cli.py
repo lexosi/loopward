@@ -12,6 +12,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from loopward import __version__
 from loopward.engine.audit import AuditLog
 from loopward.engine.llm_wrapper import DEFAULT_MODEL, LLMClient
 from loopward.engine.orchestrator import Orchestrator
@@ -40,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="loopward",
         description="Run a code-review with anti-loop, stop-gate, and audit.",
+    )
+    p.add_argument(
+        "--version",
+        action="version",
+        version=f"loopward {__version__}",
     )
     p.add_argument("diff", type=Path, help="path to a diff/patch file to review")
     p.add_argument(

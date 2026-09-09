@@ -4,7 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loopward"
-version = "0.1.0"
+# Single source of truth for the version is loopward/__init__.py:__version__.
+# setuptools reads it at build time via [tool.setuptools.dynamic] below, so the
+# number is never written twice and cannot drift between here and the code.
+dynamic = ["version"]
 description = "Reliability layer for multi-agent LLM systems: anti-loop, human stop-gates, and per-run audit trails."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -58,6 +61,9 @@ loopward-demo = "loopward.demo:console"
 Homepage = "https://github.com/lexosi/loopward"
 Repository = "https://github.com/lexosi/loopward"
 Issues = "https://github.com/lexosi/loopward/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "loopward.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["loopward*"]
