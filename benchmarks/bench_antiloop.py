@@ -58,7 +58,8 @@ CONDITIONS (read before trusting any figure)
   or timeout tolerates before pulling the plug. It is an input, not a property of
   the code. Different K → different ratio. That is the whole point: the naive loop
   has no ceiling of its own.
-- **Cost for the fake provider is null.** The fake is not in ``PRICING``, so its
+- **Cost for the fake provider is null.** The fake has no rate in the benchmark's
+  supplied ``EXAMPLE_RATES``, so its
   ``cost_usd`` is None (unpriced) — not 0, which would read as "free". CALLS are
   measured (counted invocations); TOKENS are an estimate (``len//4``), not
   measured — ``len//4`` is a formula, so calling that count "measured" would be
@@ -92,7 +93,7 @@ from loopward.agents.reviewer import (  # noqa: E402  (after sys.path shim)
 )
 from loopward.engine.anti_loop import MAX_ATTEMPTS  # noqa: E402
 from loopward.engine.audit import AuditLog  # noqa: E402
-from loopward.engine.llm_wrapper import PRICING, LLMClient, Message, _calc_cost  # noqa: E402
+from loopward.engine.llm_wrapper import LLMClient, Message, _calc_cost  # noqa: E402
 from loopward.engine.orchestrator import STATUS_EXHAUSTED, Orchestrator  # noqa: E402
 from loopward.engine.stop_gate import GATE_AUTO, StopGate  # noqa: E402
 
@@ -133,6 +134,20 @@ DEFAULT_NAIVE_KILLS = [10, 25, 50, 100]
 # Provider/model used only to PROJECT a USD cost from measured tokens (derived).
 PROJECTION_PROVIDER = "deepseek"
 PROJECTION_MODEL = "deepseek-v4-flash"
+
+# EXAMPLE rates the benchmark uses to project a cost — supplied HERE, by the
+# caller, exactly as loopward now requires of anyone who wants a cost figure. The
+# library asserts no rates; these are the benchmark's own, and they are dated so
+# they cannot age in silence. Flat DeepSeek rates this repo had verified on
+# 2026-07-31; DeepSeek's live pricing is now time-of-day dependent, so these are
+# an illustrative constant for a reproducible projection, NOT a current price.
+EXAMPLE_RATES_LABEL = "loopward benchmark example rates, verified 2026-07-31"
+EXAMPLE_RATES: dict[tuple[str, str], dict[str, float]] = {
+    ("deepseek", "deepseek-v4-flash"): {"prompt": 0.14, "completion": 0.28},
+    ("deepseek", "deepseek-v4-pro"): {"prompt": 0.435, "completion": 0.87},
+    ("claude", "claude-haiku-4-5"): {"prompt": 1.0, "completion": 5.0},
+    ("claude", "claude-sonnet-4-6"): {"prompt": 3.0, "completion": 15.0},
+}
 
 
 @dataclass(frozen=True)
@@ -328,10 +343,11 @@ def project_cost(m: Measurement, provider: str, model: str) -> float:
     """DERIVED projection: estimated (len//4) tokens x a real provider's published rate.
 
     NOT a measurement. The fake provider is unpriced (cost None); this multiplies
-    the estimated (``len//4``) token counts by ``PRICING[(provider, model)]`` via
-    the repo's own helper.
+    the estimated (``len//4``) token counts by the benchmark's own
+    ``EXAMPLE_RATES[(provider, model)]`` via the repo's helper — a rate supplied
+    by this caller, not one the library asserts.
     """
-    return _calc_cost(provider, model, m.prompt, m.completion)
+    return _calc_cost(provider, model, m.prompt, m.completion, EXAMPLE_RATES)
 
 
 def build_report(
@@ -343,7 +359,7 @@ def build_report(
     gl = measure_loopward()
     chunk_worst = measure_loopward_chunked()  # asserts the additive formula
     chunk_verdict = _measure_chunked(verify_fails=False)  # a run that reaches a verdict
-    priced = (provider, model) in PRICING
+    priced = (provider, model) in EXAMPLE_RATES
     rows = []
     for k in naive_kills:
         nv = measure_naive(k)
@@ -420,10 +436,12 @@ def build_report(
             "provider": provider,
             "model": model,
             "priced": priced,
+            "rates_label": EXAMPLE_RATES_LABEL,
             "note": (
                 "DERIVED, not measured: fake provider is unpriced (cost None). "
-                "USD = estimated (len//4) tokens x published rate via _calc_cost. "
-                "Unknown (provider,model) -> None."
+                "USD = estimated (len//4) tokens x a rate this benchmark supplies "
+                "(EXAMPLE_RATES), not one the library asserts, via _calc_cost. "
+                "Pair not in the supplied rates -> None."
             ),
         },
     }

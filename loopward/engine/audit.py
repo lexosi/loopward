@@ -72,17 +72,24 @@ def _render_cost_basis(basis: dict[str, Any] | None) -> str:
     """Render the cost basis line for ``audit.md``.
 
     Carries the same facts the JSON ``cost_basis`` block holds — that the figures
-    are a ``len//4`` estimate, whether they were priced, and the date the rates
-    were verified — so the markdown, read on its own, distinguishes an estimate
-    from a bill and shows the figure's age.
+    are a ``len//4`` estimate, whether they were priced, and WHERE the rate came
+    from — so the markdown, read on its own, distinguishes an estimate from a
+    bill and never mistakes a caller-supplied rate for one loopward asserts.
     """
     if not basis:
         return "(not recorded)"
     priced = basis.get("priced")
-    verified = basis.get("rates_verified")
+    source = basis.get("rates_source")
+    label = basis.get("rates_label")
     priced_phrase = "priced" if priced else "unpriced -> cost_usd null"
-    verified_phrase = f"; rates verified {verified}" if verified else ""
-    return f"estimated (len//4 tokens x published rate), {priced_phrase}{verified_phrase}"
+    if source == "caller":
+        label_phrase = f" (labelled: {label})" if label else " (no label)"
+        source_phrase = f"; rate supplied by the caller{label_phrase}"
+    elif source == "unset":
+        source_phrase = "; no rate supplied by the caller"
+    else:
+        source_phrase = ""
+    return f"estimated (len//4 tokens x caller-supplied rate), {priced_phrase}{source_phrase}"
 
 
 #: How many ``<ts>-N`` fallbacks to try before giving up on a free run directory.

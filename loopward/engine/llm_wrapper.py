@@ -25,36 +25,34 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 Message = dict[str, str]  # {"role": "system"|"user"|"assistant", "content": "..."}
 
-# USD per 1M tokens, cache-miss rates. An unknown (provider, model) pair is
-# UNPRICED: `_calc_cost` returns None, not 0, so "could not be priced" never
-# collapses into "cost nothing". Zero is a credible number and would hide the
-# difference; absence cannot.
+#: Caller-supplied rate map: USD per 1M tokens, keyed by ``(provider, model)``.
+#: ``{("deepseek", "deepseek-v4-flash"): {"prompt": 0.14, "completion": 0.28}}``.
+Rates = Mapping[tuple[str, str], Mapping[str, float]]
+
+# Rates are USD per 1M tokens, keyed by ``(provider, model)`` — and they do NOT
+# live here. This module used to carry a ``PRICING`` table with a "last verified"
+# date, and that date is exactly the defect: a published rate drifts, the table
+# goes stale in silence, and loopward keeps asserting a number that stopped being
+# true. So loopward no longer states what anything costs. The caller supplies the
+# rates (:class:`LLMClient` ``rates=``); this module only does the arithmetic on
+# what it is given.
+#
+# A pair with no rate in the caller's mapping — or a caller who supplied none at
+# all — is UNPRICED: `_calc_cost` returns None, not 0, so "could not be priced"
+# never collapses into "cost nothing". Zero is a credible number and would hide
+# the difference; absence cannot.
 #
 # The unpriced result is marked as such on every surface it reaches, not only in
 # the benchmark. A trail from an unpriced pair reports `"cost_usd": null` and a
 # `cost_basis` block (see `LLMClient.cost_basis`), so an artifact read on its own
-# — without the benchmark in front of it — still tells an estimate from a bill.
-#
-# Prices are published rates and drift over time; last verified on
-# PRICING_VERIFIED below.
-# Re-check the providers' pricing pages before relying on the cost figures.
-#: Date the PRICING rates were last checked against the providers' pages. It
-#: travels into every audit trail's cost basis, so the figure's age is visible
-#: on the artifact without opening this file — single source of truth for that
-#: date, cited by the comment above.
-PRICING_VERIFIED = "2026-07-31"
-
-PRICING: dict[tuple[str, str], dict[str, float]] = {
-    ("deepseek", "deepseek-v4-flash"): {"prompt": 0.14, "completion": 0.28},
-    ("deepseek", "deepseek-v4-pro"): {"prompt": 0.435, "completion": 0.87},
-    ("claude", "claude-haiku-4-5"): {"prompt": 1.0, "completion": 5.0},
-    ("claude", "claude-sonnet-4-6"): {"prompt": 3.0, "completion": 15.0},
-}
+# — without the benchmark in front of it — still tells an estimate from a bill,
+# and says WHERE the rate came from (``rates_source``) so a supplied number is
+# never mistaken for one loopward stands behind.
 
 DEFAULT_MODEL: dict[str, str] = {
     "deepseek": "deepseek-v4-flash",
@@ -121,23 +119,28 @@ def _estimate_tokens(text: str) -> int:
 
 
 def _calc_cost(
-    provider: str, model: str, prompt_tokens: int, completion_tokens: int
+    provider: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    rates: Rates,
 ) -> float | None:
     """USD cost of one call from derived token counts, or ``None`` when unpriced.
 
-    ``None`` — not ``0.0`` — for a (provider, model) with no published rate here:
-    a run that could not be priced and one that genuinely cost nothing are
-    different facts, and ``0.0`` is a believable number that erases the
-    difference. A ``None`` cannot be read as a bill of zero.
+    ``rates`` is the caller's map (see :data:`Rates`); this function never holds
+    a rate of its own. ``None`` — not ``0.0`` — for a (provider, model) with no
+    entry in ``rates``: a run that could not be priced and one that genuinely
+    cost nothing are different facts, and ``0.0`` is a believable number that
+    erases the difference. A ``None`` cannot be read as a bill of zero.
 
     The tokens fed in are themselves a ``len//4`` estimate (see
     :func:`_estimate_tokens`), so a non-``None`` result is a derived projection,
-    never billed accounting.
+    never billed accounting — from a rate loopward was handed, not one it asserts.
     """
-    rates = PRICING.get((provider, model))
-    if not rates:
+    rate = rates.get((provider, model))
+    if not rate:
         return None
-    cost = (prompt_tokens * rates["prompt"] + completion_tokens * rates["completion"]) / 1_000_000
+    cost = (prompt_tokens * rate["prompt"] + completion_tokens * rate["completion"]) / 1_000_000
     return round(cost, 6)
 
 
@@ -149,8 +152,9 @@ def _calc_cost(
 _COST_BASIS_NOTE = (
     "token counts are a len//4 estimate — not a tokenizer, and not the "
     "provider's own usage even when it reports one; cost_usd = estimated tokens "
-    "x published rate, not billed; null when the (provider, model) pair has no "
-    "published rate here"
+    "x the rate the CALLER supplied for this (provider, model), not billed and "
+    "not a rate loopward asserts; null when the caller supplied no rate for the "
+    "pair"
 )
 
 
@@ -180,6 +184,19 @@ class LLMClient:
         ``(messages, task) -> str`` — it is called with both arguments, as
         :data:`FakeScript` types it and :meth:`_complete_fake` does. If
         omitted, a built-in heuristic replies.
+    rates:
+        The caller's USD-per-1M-token rates, keyed by ``(provider, model)`` (see
+        :data:`Rates`). loopward holds no rates of its own: with none supplied, or
+        none for this pair, ``cost_usd`` is ``None`` and ``cost_basis`` reports it
+        unpriced. A copy is taken, so a later mutation of the caller's map does
+        not change what this client prices.
+    rates_label:
+        Free-form provenance the caller attaches to ``rates`` — a date, a source,
+        a note. Recorded verbatim in ``cost_basis`` and **not validated**: it is
+        the caller's statement about the caller's own data, and imposing a format
+        would be loopward asserting something about it. Without a label the
+        caller's rates can go stale unseen, exactly as loopward's own did; the
+        label is that same discipline handed to whoever uses loopward.
     """
 
     def __init__(
@@ -187,12 +204,19 @@ class LLMClient:
         provider: str = "deepseek",
         model: str | None = None,
         fake_script: FakeScript | None = None,
+        *,
+        rates: Rates | None = None,
+        rates_label: str | None = None,
     ) -> None:
         if provider not in ("deepseek", "claude", "fake"):
             raise ValueError(f"unknown provider {provider!r} (use deepseek|claude|fake)")
         self.provider = provider
         self.model = model or DEFAULT_MODEL[provider]
         self._fake_script = fake_script
+        # A copy, so the caller mutating their map later cannot retroactively
+        # change what this client priced. Empty map == no rates supplied.
+        self._rates: dict[tuple[str, str], Mapping[str, float]] = dict(rates) if rates else {}
+        self._rates_label = rates_label
         self._fake_calls = 0
         self._client = None  # lazily constructed for real providers
         self._totals: dict[str, float | None] = {
@@ -219,19 +243,25 @@ class LLMClient:
         """How this client's usage figures should be read: derived, not billed.
 
         ``tokens_estimated`` and ``cost_derived`` are always true — the counts
-        are a ``len//4`` estimate and the cost is those tokens times a published
+        are a ``len//4`` estimate and the cost is those tokens times the caller's
         rate, never a provider invoice. ``priced`` is a property of the
-        (provider, model) pair, independent of how many calls ran: false means no
-        published rate here and therefore ``cost_usd`` is ``None``.
-        ``rates_verified`` carries the date the rates were last checked, so the
-        figure's age travels with it. Folded into the audit summary so a trail is
-        self-describing without this module in front of the reader.
+        (provider, model) pair against the supplied rates, independent of how many
+        calls ran: false means no rate for this pair and therefore ``cost_usd`` is
+        ``None``.
+
+        ``rates_source`` says WHERE the rate came from — ``"caller"`` when the
+        client was given a rate map, ``"unset"`` when it was not — so a reader of
+        the trail can never mistake a supplied number for one loopward asserts.
+        ``rates_label`` is the caller's own free-form provenance, verbatim and
+        unvalidated (``None`` when absent). Folded into the audit summary so a
+        trail is self-describing without this module in front of the reader.
         """
         return {
             "tokens_estimated": True,
             "cost_derived": True,
-            "priced": (self.provider, self.model) in PRICING,
-            "rates_verified": PRICING_VERIFIED,
+            "priced": (self.provider, self.model) in self._rates,
+            "rates_source": "caller" if self._rates else "unset",
+            "rates_label": self._rates_label,
             "note": _COST_BASIS_NOTE,
         }
 
@@ -284,7 +314,7 @@ class LLMClient:
 
         prompt_tokens = sum(_estimate_tokens(m.get("content", "")) for m in messages)
         completion_tokens = _estimate_tokens(text)
-        cost = _calc_cost(self.provider, self.model, prompt_tokens, completion_tokens)
+        cost = _calc_cost(self.provider, self.model, prompt_tokens, completion_tokens, self._rates)
         self._totals["prompt"] += prompt_tokens
         self._totals["completion"] += completion_tokens
         # None is sticky: once a call is unpriced, the running total is

@@ -15,7 +15,7 @@ import json
 import pytest
 
 from loopward.engine.audit import AuditLog
-from loopward.engine.llm_wrapper import PRICING_VERIFIED, LLMClient
+from loopward.engine.llm_wrapper import LLMClient
 from loopward.engine.orchestrator import Orchestrator
 from loopward.engine.stop_gate import GATE_AUTO, StopGate
 
@@ -26,12 +26,13 @@ _SAMPLE_DIFF = (
 )
 
 
-def _basis(priced: bool) -> dict:
+def _basis(priced: bool, rates_source: str = "unset", rates_label=None) -> dict:
     return {
         "tokens_estimated": True,
         "cost_derived": True,
         "priced": priced,
-        "rates_verified": PRICING_VERIFIED,
+        "rates_source": rates_source,
+        "rates_label": rates_label,
         "note": "token counts are a len//4 estimate; cost = estimated tokens x rate",
     }
 
@@ -67,23 +68,43 @@ def test_real_zero_is_distinct_from_uncalculable_in_trail(tmp_path):
 
 
 @pytest.mark.unit
-def test_cost_basis_reaches_json_and_md_with_verification_date(tmp_path):
-    # The derived marker + rates_verified date land in BOTH files, so an artifact
+def test_cost_basis_reaches_json_and_md_with_caller_rate_source(tmp_path):
+    # The derived marker + rate provenance land in BOTH files, so an artifact
     # read without the benchmark in front of it can still tell estimate from
-    # accounting and see how old the rates are.
+    # accounting and see WHERE the rate came from. The caller's free-form label
+    # travels verbatim, unvalidated.
     log = AuditLog(run_id="basis", base_dir=tmp_path)
-    log.record_usage(prompt=100, completion=40, cost_usd=None, basis=_basis(priced=False))
+    log.record_usage(
+        prompt=100,
+        completion=40,
+        cost_usd=0.5,
+        basis=_basis(priced=True, rates_source="caller", rates_label="prices as of my notes"),
+    )
     run_dir = log.finalize("ok", "done")
 
     summary = json.loads((run_dir / "audit.json").read_text(encoding="utf-8"))["summary"]
     basis = summary["cost_basis"]
     assert basis["tokens_estimated"] is True
-    assert basis["priced"] is False
-    assert basis["rates_verified"] == PRICING_VERIFIED
+    assert basis["priced"] is True
+    assert basis["rates_source"] == "caller"
+    assert basis["rates_label"] == "prices as of my notes"
 
     md = (run_dir / "audit.md").read_text(encoding="utf-8")
-    assert PRICING_VERIFIED in md
+    assert "caller" in md.lower()
+    assert "prices as of my notes" in md
     assert "estimat" in md.lower()
+
+
+@pytest.mark.unit
+def test_cost_basis_md_marks_no_rates_when_unset(tmp_path):
+    # An unpriced run with no rate supplied says so in the markdown: a reader must
+    # be able to tell "the caller gave no rate" from "the caller gave one".
+    log = AuditLog(run_id="basis-unset", base_dir=tmp_path)
+    log.record_usage(prompt=100, completion=40, cost_usd=None, basis=_basis(priced=False))
+    run_dir = log.finalize("ok", "done")
+
+    md = (run_dir / "audit.md").read_text(encoding="utf-8")
+    assert "no rate" in md.lower()
 
 
 @pytest.mark.integration

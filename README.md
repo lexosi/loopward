@@ -277,6 +277,65 @@ pip install "loopward[deepseek] @ git+https://github.com/lexosi/loopward.git"
 pip install "loopward[claude]   @ git+https://github.com/lexosi/loopward.git"
 ```
 
+## Cost
+
+**loopward states no prices.** It used to ship a rate table with a "verified"
+date, and that date was the whole problem: a published rate drifts, the table
+goes stale in silence, and the tool keeps asserting a number that stopped being
+true. So the rates now come from *you*. loopward does the arithmetic on what it
+is given and records where the rate came from — nothing more.
+
+Pass a `rates` map (USD per 1M tokens, keyed by `(provider, model)`) and a free
+`rates_label` that dates or names your figures. With no rate for a pair,
+`cost_usd` is `null` and the trail marks it unpriced — never a fabricated `0.0`:
+
+```python
+from loopward.engine.llm_wrapper import LLMClient
+
+client = LLMClient(
+    provider="deepseek",
+    model="deepseek-v4-flash",
+    rates={
+        ("deepseek", "deepseek-v4-flash"): {"prompt": 0.14, "completion": 0.28},
+        ("deepseek", "deepseek-v4-pro"):   {"prompt": 0.435, "completion": 0.87},
+    },
+    rates_label="my rates, checked 2026-08-01",  # free text; loopward never parses it
+)
+```
+
+The audit trail then records `rates_source: "caller"` and your `rates_label`
+verbatim, so a reader knows the number is *yours*, not one loopward vouches for.
+The `rates_label` is the same discipline loopward now imposes on itself, handed
+to you: an unlabelled rate goes stale unseen, exactly as loopward's own did.
+
+### Example rates — copy, then verify against the official page
+
+These are a **starting point**, not current prices. Each carries the date it was
+last true. Check the provider's page before you rely on any of them.
+
+**Anthropic** — [claude.com/pricing](https://claude.com/pricing) · verified
+2026-09-09:
+
+| Model | Input ($/1M) | Output ($/1M) |
+| --- | --- | --- |
+| `claude-haiku-4-5` | 1.0 | 5.0 |
+| `claude-sonnet-4-6` | 3.0 | 15.0 |
+
+**DeepSeek** — [api-docs.deepseek.com](https://api-docs.deepseek.com/quick_start/pricing)
+· the values below are the flat rates this repo had verified on **2026-07-31**:
+
+| Model | Input ($/1M) | Output ($/1M) |
+| --- | --- | --- |
+| `deepseek-v4-flash` | 0.14 | 0.28 |
+| `deepseek-v4-pro` | 0.435 | 0.87 |
+
+> **DeepSeek is no longer a flat rate.** Verified 2026-09-09 against the official
+> page: DeepSeek's price now depends on the time of day. Off-peak rates are half
+> the peak rates; peak hours are **01:00–04:00 and 06:00–10:00 UTC, Monday
+> through Friday** (all other hours off-peak). No static figure above is valid
+> today — a DeepSeek user must read the current peak/off-peak numbers off the
+> official page and pass their own.
+
 ## Architecture
 
 ```text

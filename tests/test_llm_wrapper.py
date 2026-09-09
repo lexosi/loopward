@@ -3,11 +3,16 @@
 import pytest
 
 from loopward.engine.llm_wrapper import (
-    PRICING_VERIFIED,
     EmptyCompletionError,
     LLMClient,
     _calc_cost,
 )
+
+# Rates now live with the caller, never in the module. These are a test fixture,
+# not a published rate the code asserts — the exact shape a real caller passes.
+_RATES = {
+    ("deepseek", "deepseek-v4-flash"): {"prompt": 0.14, "completion": 0.28},
+}
 
 
 @pytest.mark.unit
@@ -57,24 +62,48 @@ def test_totals_accumulate():
 
 @pytest.mark.unit
 def test_cost_is_none_not_zero_for_unknown_model():
-    # An unpriced (provider, model) yields None, not 0.0. A real zero and an
-    # uncalculable cost must not collapse to the same credible-looking number —
-    # a reader cannot tell "cost nothing" from "could not be priced" if both read 0.0.
-    assert _calc_cost("fake", "fake-1", 1000, 1000) is None
+    # A (provider, model) with no rate in the caller's mapping yields None, not
+    # 0.0. A real zero and an uncalculable cost must not collapse to the same
+    # credible-looking number — a reader cannot tell "cost nothing" from "could
+    # not be priced" if both read 0.0.
+    assert _calc_cost("fake", "fake-1", 1000, 1000, _RATES) is None
+
+
+@pytest.mark.unit
+def test_no_rates_supplied_yields_null():
+    # The whole point of this change: with no rates from the caller, cost is
+    # uncalculable (None), never a fabricated 0.0. loopward stops asserting price.
+    assert _calc_cost("deepseek", "deepseek-v4-flash", 1_000_000, 1_000_000, {}) is None
 
 
 @pytest.mark.unit
 def test_priced_zero_is_distinct_from_uncalculable():
-    # Priced pair, zero tokens -> a genuine 0.0 (a float). Unpriced pair -> None.
-    # The two are distinguishable; against HEAD both are 0.0 and are not.
-    assert _calc_cost("deepseek", "deepseek-v4-flash", 0, 0) == 0.0
-    assert _calc_cost("fake", "fake-1", 0, 0) is None
+    # Rate present, zero tokens -> a genuine 0.0 (a float). No rate -> None.
+    # The two are distinguishable; a single 0.0 for both would erase the line.
+    assert _calc_cost("deepseek", "deepseek-v4-flash", 0, 0, _RATES) == 0.0
+    assert _calc_cost("fake", "fake-1", 0, 0, _RATES) is None
 
 
 @pytest.mark.unit
-def test_cost_nonzero_for_known_model():
-    cost = _calc_cost("deepseek", "deepseek-v4-flash", 1_000_000, 1_000_000)
-    assert cost == pytest.approx(0.14 + 0.28)
+def test_cost_comes_from_the_callers_rates_not_the_module():
+    # The number is derived from the rate the CALLER passed, nothing baked in.
+    # Feed a deliberately distinctive rate and read it straight back out.
+    rates = {("deepseek", "deepseek-v4-flash"): {"prompt": 1.0, "completion": 2.0}}
+    cost = _calc_cost("deepseek", "deepseek-v4-flash", 1_000_000, 1_000_000, rates)
+    assert cost == pytest.approx(1.0 + 2.0)
+    # And the repo's own example rate gives its own number, not the one above.
+    assert _calc_cost(
+        "deepseek", "deepseek-v4-flash", 1_000_000, 1_000_000, _RATES
+    ) == pytest.approx(0.14 + 0.28)
+
+
+@pytest.mark.unit
+def test_a_rate_for_one_model_does_not_price_another():
+    # A caller who priced flash but not pro gets a number for flash and None for
+    # pro — partial rate maps behave, no accidental spill between models.
+    rates = {("deepseek", "deepseek-v4-flash"): {"prompt": 0.14, "completion": 0.28}}
+    assert _calc_cost("deepseek", "deepseek-v4-flash", 1_000_000, 0, rates) == pytest.approx(0.14)
+    assert _calc_cost("deepseek", "deepseek-v4-pro", 1_000_000, 0, rates) is None
 
 
 @pytest.mark.unit
@@ -89,16 +118,45 @@ def test_fake_response_and_totals_cost_is_none():
 
 
 @pytest.mark.unit
-def test_cost_basis_declares_estimation_and_verification_date():
-    # The wrapper describes how its numbers are produced: tokens are a len//4
-    # estimate (true regardless of any provider-side count), cost is derived, and
-    # the rates carry the date they were last verified.
+def test_cost_basis_declares_estimation_and_no_rates_source_when_unset():
+    # No rates passed: the basis still describes how numbers are produced (len//4
+    # estimate, derived), reports unpriced, and — the new requirement — marks the
+    # rate source as "unset" so a trail reader knows no rate was supplied.
     llm = LLMClient(provider="fake", fake_script=["HIGH: a"])
     basis = llm.cost_basis
     assert basis["tokens_estimated"] is True
-    assert basis["priced"] is False  # fake is unpriced
-    assert basis["rates_verified"] == PRICING_VERIFIED
+    assert basis["priced"] is False
+    assert basis["rates_source"] == "unset"
+    assert basis["rates_label"] is None
     assert "len//4" in basis["note"]
+
+
+@pytest.mark.unit
+def test_cost_basis_marks_rates_as_caller_supplied_with_free_label():
+    # When the caller supplies rates, the trail must say so ("caller") and carry
+    # the caller's own free-form label verbatim — no format imposed, because
+    # inventing a format would be asserting something about someone else's datum.
+    llm = LLMClient(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        rates=_RATES,
+        rates_label="my desk, 2026-07-31 (whatever the caller wants)",
+    )
+    basis = llm.cost_basis
+    assert basis["priced"] is True  # this pair is in the supplied rates
+    assert basis["rates_source"] == "caller"
+    assert basis["rates_label"] == "my desk, 2026-07-31 (whatever the caller wants)"
+
+
+@pytest.mark.unit
+def test_caller_rates_price_the_model_but_a_missing_pair_stays_unpriced():
+    # Caller supplied a flash rate only. A flash client is priced; a pro client
+    # under the same mapping is not — source is still "caller" either way.
+    priced = LLMClient(provider="deepseek", model="deepseek-v4-flash", rates=_RATES)
+    unpriced = LLMClient(provider="deepseek", model="deepseek-v4-pro", rates=_RATES)
+    assert priced.cost_basis["priced"] is True
+    assert unpriced.cost_basis["priced"] is False
+    assert unpriced.cost_basis["rates_source"] == "caller"
 
 
 @pytest.mark.unit
@@ -127,6 +185,42 @@ def test_deepseek_provider_mocked(monkeypatch):
     out = llm.complete([{"role": "user", "content": "x"}])
     assert out.text == "HIGH: mocked finding"
     assert out.provider == "deepseek"
+
+
+@pytest.mark.unit
+def test_complete_cost_is_null_without_rates_and_derived_with_them(monkeypatch):
+    """End to end through complete(): no rates -> cost None; rates -> a number.
+
+    Same mocked deepseek call twice. The only difference is whether the caller
+    handed the client a rate for this pair; the cost tracks that, nothing else.
+    """
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+
+    class _Msg:
+        content = "HIGH: finding with enough text to estimate some tokens"
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _FakeClient:
+        class chat:  # noqa: N801
+            class completions:  # noqa: N801
+                @staticmethod
+                def create(model, messages):
+                    return _Resp()
+
+    no_rates = LLMClient(provider="deepseek", model="deepseek-v4-flash")
+    no_rates._client = _FakeClient()
+    assert no_rates.complete([{"role": "user", "content": "review this diff"}]).cost_usd is None
+
+    with_rates = LLMClient(provider="deepseek", model="deepseek-v4-flash", rates=_RATES)
+    with_rates._client = _FakeClient()
+    out = with_rates.complete([{"role": "user", "content": "review this diff"}])
+    assert out.cost_usd is not None
+    assert out.cost_usd > 0
 
 
 # ---- the provider's stop reason crosses the wrapper -------------------------
