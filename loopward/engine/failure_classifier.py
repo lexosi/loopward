@@ -48,13 +48,16 @@ CONTEXT_LENGTH_EXCEEDED = "context_length_exceeded"
 #: trail to record the raw signal so the class worth adding next is visible.
 UNKNOWN = "unknown"
 
-# --- declared strategy destinations (NOT implemented in this unit) ----------
+# --- declared strategy destinations (NOT wired into any loop from here) ------
 #: Where a :data:`CONTEXT_LENGTH_EXCEEDED` failure should be sent: split the diff
-#: and review the pieces. The name is DECLARED here so the map has a real
-#: destination; the strategy itself does not exist yet (it is not in
-#: ``reviewer.STRATEGIES``) and building it is unit 3. There is deliberately no
-#: empty placeholder and no ``NotImplementedError`` — a string in a dict is the
-#: whole declaration.
+#: and review the pieces. Only the NAME is declared here, as a bare string. The
+#: strategy itself is built in ``loopward.agents.chunk_diff`` (``split_diff`` +
+#: ``CHUNK_DIFF_INSTRUCTION``), and this module deliberately does NOT import it:
+#: the dependency direction is ``orchestrator -> agents -> engine``, so engine
+#: reaching into an agent would cut a cycle. It is also NOT in
+#: ``reviewer.STRATEGIES`` — reached by this measured-failure map, not by the
+#: ordered list. A string in a dict is the whole declaration this layer needs;
+#: nothing in production routes a failure to it yet.
 CHUNK_DIFF_STRATEGY = "chunk-diff"
 
 #: failure class -> the next strategy to try. A plain dict, extensible by adding

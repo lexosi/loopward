@@ -71,42 +71,65 @@ def test_the_table_has_exactly_one_entry_and_it_is_the_measured_class():
 @pytest.mark.unit
 def test_the_map_has_one_entry_pointing_at_the_declared_destination():
     # Shape only: exactly one class -> one destination. Whether that destination
-    # is (deliberately) unbuilt is the tripwire's job, in the test below.
+    # is a built strategy yet off the ordered list is the tripwire's job, below.
     assert NEXT_STRATEGY == {CONTEXT_LENGTH_EXCEEDED: CHUNK_DIFF_STRATEGY}
 
 
 @pytest.mark.unit
-def test_chunk_diff_destination_is_a_tripwire_not_a_built_strategy():
-    """GUARD, not a regression test — and green today ON PURPOSE.
+def test_chunk_diff_is_built_but_stays_off_the_ordered_strategy_list():
+    """GUARD: the destination is built as an agent, yet is NOT an ordered strategy.
 
-    This exists to go RED the day someone wires 'chunk-diff' into the reviewer.
-    At that point the destination must actually be built (a real strategy with a
-    prompt), documented, and this guard updated deliberately. A passing run is
-    NOT evidence that chunk-diff works — it is evidence of the opposite: that the
-    map's destination is still declared, not built. Do not read it as a
-    behaviour test.
+    Two mechanisms, deliberately kept apart. The ordered list (``STRATEGIES`` +
+    ``_STRATEGY_INSTRUCTIONS``) is traversed on exhaustion and its length sets
+    the anti-loop's hard bound. This map reaches its destination by a MEASURED
+    failure class instead, so its destination must NOT be a member of that list:
+    if it were, ``len(STRATEGIES)`` would grow and the benchmark's bound of 6
+    would move.
+
+    So this holds two things at once:
+
+    - The destination RESOLVES TO A BUILT STRATEGY — a real prompt
+      (``CHUNK_DIFF_INSTRUCTION``, whose own example the reviewer's parser reads)
+      and a real splitter (``split_diff``) exist in ``loopward.agents.chunk_diff``.
+    - The destination is STILL NOT a member of the ordered list, nor a key in the
+      ordered-list prompt table.
+
+    It goes RED the day someone folds chunk-diff into ``STRATEGIES`` (raising the
+    bound) — the earlier version of this test asserted chunk-diff was not built
+    at all, a premise the real design makes false.
     """
-    from loopward.agents.reviewer import _STRATEGY_INSTRUCTIONS, STRATEGIES
+    from loopward.agents.chunk_diff import CHUNK_DIFF_INSTRUCTION, split_diff
+    from loopward.agents.reviewer import _STRATEGY_INSTRUCTIONS, STRATEGIES, parse_findings
 
     destination = NEXT_STRATEGY[CONTEXT_LENGTH_EXCEEDED]
+
+    # (1) resolves to a built strategy: a prompt that honours the format contract
+    #     and a splitter that exists.
+    assert CHUNK_DIFF_INSTRUCTION.strip()
+    assert len(parse_findings(CHUNK_DIFF_INSTRUCTION.splitlines()[-1])) == 1
+    assert callable(split_diff)
+
+    # (2) and still off the ordered list, and out of its prompt table.
     assert destination not in STRATEGIES
     assert destination not in _STRATEGY_INSTRUCTIONS
 
 
 @pytest.mark.unit
-def test_the_unbuilt_destination_is_rejected_with_cause_not_run_as_concise():
-    """The map's destination is declared but not built — so asking for it must fail loud.
+def test_the_destination_is_built_elsewhere_and_the_reviewer_still_rejects_it():
+    """chunk-diff is built as its own agent, not as a reviewer strategy — so the
+    reviewer must still refuse it by name.
 
     ``reviewer.build_messages`` once resolved an unknown strategy to 'concise'
     via ``_STRATEGY_INSTRUCTIONS.get(strategy, default)`` with NO signal. That
-    was the danger this map poses: wire the declared-but-unbuilt destination into
-    the review loop and it would silently run as 'concise' while the trail
-    recorded a class-jump that did not happen — a certificate over nothing.
+    was the danger this map poses: point the review loop at this destination and
+    it would silently run as 'concise' while the trail recorded a class-jump that
+    did not happen — a certificate over nothing.
 
-    That is closed upstream of the wiring. The reviewer now raises
-    ``UnknownStrategyError`` for a strategy it has no prompt for, and the cause
-    names the missing strategy. So the destination cannot be resolved to concise
-    behind the trail's back: it fails, with the unbuilt strategy named.
+    That is closed upstream of any wiring. chunk-diff now exists (in
+    ``loopward.agents.chunk_diff``), but it is NOT one of the reviewer's ordered
+    strategies, so the reviewer has no prompt for it and raises
+    ``UnknownStrategyError`` with the strategy named. Built as an agent, unknown
+    to the reviewer: it cannot slip through as concise behind the trail's back.
     """
     from loopward.agents.reviewer import Reviewer, UnknownStrategyError
 
