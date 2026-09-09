@@ -32,6 +32,7 @@ from loopward.agents.reviewer import STRATEGIES, Finding, Reviewer, ReviewParseE
 from loopward.agents.verifier import Verifier, VerifyParseError, VerifyResult
 from loopward.engine.anti_loop import AttemptOutcome, AttemptTracker, is_genuine_outcome
 from loopward.engine.audit import AuditAlreadyFinalizedError, AuditLog
+from loopward.engine.failure_classifier import classify_signal, extract_signal
 from loopward.engine.llm_wrapper import LLMClient
 from loopward.engine.stop_gate import StopGate
 
@@ -521,11 +522,32 @@ class Orchestrator:
             # record would destroy the better of the two.
             return
         summary = f"run crashed: {type(exc).__name__}: {exc}"
+        # Classify by WIRE SIGNAL, not by exception class — the class is not
+        # stable across SDK versions (see failure_classifier). This unit only
+        # records: `_finalize_crashed` re-raises whatever it got, so a known
+        # class changes nothing here and the map's destination is not acted on.
+        # For an UNKNOWN, the raw signal is what makes the repo able to say,
+        # later and with data, which class is worth adding next. Both calls are
+        # inside the guard below because neither may cost the trail.
         try:
+            signal = extract_signal(exc, getattr(self._llm, "provider", None))
             self._audit.record(
                 "result",
                 summary,
                 error_type=type(exc).__name__,
+                failure_class=classify_signal(signal),
+                # Verbatim, so an UNKNOWN's unclassified signal is on the record.
+                # http_status/body_type are null when the exception carried none
+                # (e.g. the anthropic 1.4.0 "Streaming is required" ValueError).
+                wire_signal={
+                    "provider": signal.provider,
+                    "http_status": signal.http_status,
+                    "body_type": signal.body_type,
+                    "message": signal.message,
+                    # What extraction could not read, so an UNKNOWN's trace says
+                    # *what* was missing, not just that classification failed.
+                    "unresolved": list(signal.unresolved),
+                },
                 # The full traceback lives here so the entry points never have
                 # to print one at the user.
                 traceback="".join(
