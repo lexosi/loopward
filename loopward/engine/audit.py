@@ -60,6 +60,31 @@ def _render_stop_reasons(reasons: list[str | None]) -> str:
     return ", ".join("null" if r is None else str(r) for r in reasons)
 
 
+def _render_cost(cost: float | None) -> str:
+    """Render ``cost_usd`` for ``audit.md``. ``null`` — the token ``audit.json``
+    uses and the same one ``_render_stop_reasons`` uses for a missing value — when
+    the run could not be priced, so the markdown never shows a misleading
+    ``0.000000`` for an uncalculable cost."""
+    return "null" if cost is None else f"{cost:.6f}"
+
+
+def _render_cost_basis(basis: dict[str, Any] | None) -> str:
+    """Render the cost basis line for ``audit.md``.
+
+    Carries the same facts the JSON ``cost_basis`` block holds — that the figures
+    are a ``len//4`` estimate, whether they were priced, and the date the rates
+    were verified — so the markdown, read on its own, distinguishes an estimate
+    from a bill and shows the figure's age.
+    """
+    if not basis:
+        return "(not recorded)"
+    priced = basis.get("priced")
+    verified = basis.get("rates_verified")
+    priced_phrase = "priced" if priced else "unpriced -> cost_usd null"
+    verified_phrase = f"; rates verified {verified}" if verified else ""
+    return f"estimated (len//4 tokens x published rate), {priced_phrase}{verified_phrase}"
+
+
 #: How many ``<ts>-N`` fallbacks to try before giving up on a free run directory.
 MAX_DIR_COLLISIONS = 100
 
@@ -131,7 +156,12 @@ class AuditLog:
         self._finalized = False
         self._events: list[AuditEvent] = []
         self._tokens = {"prompt": 0, "completion": 0, "total": 0}
-        self._cost_usd = 0.0
+        #: ``None`` once any folded cost was unpriced — an uncalculable total is
+        #: kept uncalculable, never rounded to ``0.0``.
+        self._cost_usd: float | None = 0.0
+        #: How the usage figures were produced, supplied by the usage source and
+        #: echoed into the summary so the trail is honest on its own.
+        self._cost_basis: dict[str, Any] | None = None
         self._stop_reasons: list[str | None] = []
 
     @property
@@ -178,12 +208,37 @@ class AuditLog:
         """Append an event. Keyword args are stored under ``data``."""
         self._events.append(AuditEvent(ts=iso_now(), kind=kind, message=message, data=dict(data)))
 
-    def record_usage(self, prompt: int, completion: int, cost_usd: float) -> None:
-        """Accumulate token usage and cost across LLM calls."""
+    def record_usage(
+        self,
+        prompt: int,
+        completion: int,
+        cost_usd: float | None,
+        *,
+        basis: dict[str, Any] | None = None,
+    ) -> None:
+        """Accumulate token usage and cost across LLM calls.
+
+        ``cost_usd`` is ``None`` when the run could not be priced (an unpriced
+        (provider, model)); the accumulated cost then stays ``None`` — an
+        uncalculable total is not silently turned into ``0.0``, the same
+        distinction the summary and markdown then preserve as ``null``.
+
+        ``basis`` describes how the figures were produced — a ``len//4`` estimate
+        and a derived, unbilled cost — and is echoed into the summary so the
+        trail is self-describing. The usage source supplies it; a caller that
+        does not still gets a summary that reports ``priced`` from the cost.
+        """
         self._tokens["prompt"] += prompt
         self._tokens["completion"] += completion
         self._tokens["total"] += prompt + completion
-        self._cost_usd += cost_usd
+        # None is sticky, mirroring LLMClient.totals: one unpriced fold makes the
+        # whole run's cost uncalculable.
+        if cost_usd is None or self._cost_usd is None:
+            self._cost_usd = None
+        else:
+            self._cost_usd += cost_usd
+        if basis is not None:
+            self._cost_basis = basis
 
     def record_provider_stop_reasons(self, reasons: list[str | None]) -> None:
         """Take the run's raw provider stop reasons, in call order.
@@ -216,7 +271,10 @@ class AuditLog:
             "started_at": self.started_at,
             "ended_at": iso_now(),
             "tokens": dict(self._tokens),
-            "cost_usd": round(self._cost_usd, 6),
+            # `null`, not 0.0, when the run could not be priced — distinguishable
+            # from a run that genuinely cost nothing. See `cost_basis`.
+            "cost_usd": round(self._cost_usd, 6) if self._cost_usd is not None else None,
+            "cost_basis": self._cost_basis_summary(),
             # Raw, ordered, unnormalised; `null` where the provider reported
             # nothing (always so for `fake`). Can be longer than the call count
             # — see `LLMClient.stop_reasons`.
@@ -224,6 +282,19 @@ class AuditLog:
             "event_count": len(self._events),
             "result": result,
         }
+
+    def _cost_basis_summary(self) -> dict[str, Any]:
+        """The cost basis as written to the summary.
+
+        ``priced`` is authoritative here and reconciled to the emitted cost: it
+        is true iff ``cost_usd`` is a number, so the two can never disagree inside
+        one trail. The rest — the estimate/derivation flags, the note, the
+        verification date — is echoed from whatever the usage source supplied;
+        with no source, ``priced`` alone still lands, so the field is never empty.
+        """
+        basis = dict(self._cost_basis or {})
+        basis["priced"] = self._cost_usd is not None
+        return basis
 
     def finalize(self, status: str, result: Any) -> Path:
         """Write ``audit.json`` and ``audit.md`` to the run directory.
@@ -286,7 +357,8 @@ class AuditLog:
             f"- **ended**: {summary['ended_at']}",
             f"- **tokens**: {summary['tokens']['total']} "
             f"(prompt {summary['tokens']['prompt']}, completion {summary['tokens']['completion']})",
-            f"- **cost_usd**: {summary['cost_usd']:.6f}",
+            f"- **cost_usd**: {_render_cost(summary['cost_usd'])}",
+            f"- **cost basis**: {_render_cost_basis(summary.get('cost_basis'))}",
             f"- **provider_stop_reasons**: "
             f"{_render_stop_reasons(summary['provider_stop_reasons'])}",
             "",

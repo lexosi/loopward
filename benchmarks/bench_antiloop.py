@@ -58,11 +58,13 @@ CONDITIONS (read before trusting any figure)
   or timeout tolerates before pulling the plug. It is an input, not a property of
   the code. Different K → different ratio. That is the whole point: the naive loop
   has no ceiling of its own.
-- **Cost is fake=0.** The fake provider is not in ``PRICING`` so measured
-  ``cost_usd`` is 0. The honest measured numbers are TOKENS and CALLS. A projected
-  USD cost (multiplying measured tokens by a real provider's published rate via
-  ``_calc_cost``) is offered as a clearly-labeled DERIVED projection, not a
-  measurement.
+- **Cost for the fake provider is null.** The fake is not in ``PRICING``, so its
+  ``cost_usd`` is None (unpriced) — not 0, which would read as "free". CALLS are
+  measured (counted invocations); TOKENS are an estimate (``len//4``), not
+  measured — ``len//4`` is a formula, so calling that count "measured" would be
+  the same untruth this benchmark refuses for cost. A projected USD cost
+  (multiplying the estimated tokens by a real provider's published rate via
+  ``_calc_cost``) is a clearly-labeled DERIVED projection, not a measurement.
 
 REPRODUCE: python benchmarks/bench_antiloop.py
 """
@@ -323,10 +325,11 @@ def measure_loopward_chunked() -> ChunkMeasurement:
 
 
 def project_cost(m: Measurement, provider: str, model: str) -> float:
-    """DERIVED projection: measured tokens x a real provider's published rate.
+    """DERIVED projection: estimated (len//4) tokens x a real provider's published rate.
 
-    NOT a measurement. The fake provider costs 0; this multiplies the honest
-    token counts by ``PRICING[(provider, model)]`` via the repo's own helper.
+    NOT a measurement. The fake provider is unpriced (cost None); this multiplies
+    the estimated (``len//4``) token counts by ``PRICING[(provider, model)]`` via
+    the repo's own helper.
     """
     return _calc_cost(provider, model, m.prompt, m.completion)
 
@@ -418,8 +421,9 @@ def build_report(
             "model": model,
             "priced": priced,
             "note": (
-                "DERIVED, not measured: fake provider cost is 0. USD = measured "
-                "tokens x published rate via _calc_cost. Unknown (provider,model) -> 0."
+                "DERIVED, not measured: fake provider is unpriced (cost None). "
+                "USD = estimated (len//4) tokens x published rate via _calc_cost. "
+                "Unknown (provider,model) -> None."
             ),
         },
     }
@@ -445,7 +449,7 @@ def format_table(report: dict) -> str:
     lines.append(
         f"DERIVED cost projection ({proj['provider']}/{proj['model']}, "
         f"priced={proj['priced']}): loopward ${gl['projected_cost_usd']:.6f} "
-        "(naive per-K in --json). Fake measured cost = $0."
+        "(naive per-K in --json). Fake provider is unpriced -> cost null."
     )
     cb = report["chunked_bound"]
     cw = report["chunked"]["worst_case"]

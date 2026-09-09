@@ -549,7 +549,10 @@ class Orchestrator:
         try:
             t = self._llm.totals
             self._audit.record_usage(
-                prompt=int(t["prompt"]), completion=int(t["completion"]), cost_usd=t["cost_usd"]
+                prompt=int(t["prompt"]),
+                completion=int(t["completion"]),
+                cost_usd=t["cost_usd"],
+                basis=getattr(self._llm, "cost_basis", None),
             )
         except Exception as exc:
             print(

@@ -30,17 +30,25 @@ from dataclasses import dataclass
 
 Message = dict[str, str]  # {"role": "system"|"user"|"assistant", "content": "..."}
 
-# USD per 1M tokens, cache-miss rates. Unknown (provider, model) pairs cost 0
-# and emit no charge — keeps the fake provider free and avoids guessing.
+# USD per 1M tokens, cache-miss rates. An unknown (provider, model) pair is
+# UNPRICED: `_calc_cost` returns None, not 0, so "could not be priced" never
+# collapses into "cost nothing". Zero is a credible number and would hide the
+# difference; absence cannot.
 #
-# The 0 is not marked as such downstream. A trail from an unpriced pair reports
-# `"cost_usd": 0.0`, which reads the same as a run that genuinely cost nothing;
-# only the provider/model in the same envelope tells them apart. The benchmark
-# carries a `priced` flag for exactly this and the trail does not. Read a zero
-# here as "not priced", not as "free".
+# The unpriced result is marked as such on every surface it reaches, not only in
+# the benchmark. A trail from an unpriced pair reports `"cost_usd": null` and a
+# `cost_basis` block (see `LLMClient.cost_basis`), so an artifact read on its own
+# — without the benchmark in front of it — still tells an estimate from a bill.
 #
-# Prices are published rates and drift over time; last verified 2026-07-31.
+# Prices are published rates and drift over time; last verified on
+# PRICING_VERIFIED below.
 # Re-check the providers' pricing pages before relying on the cost figures.
+#: Date the PRICING rates were last checked against the providers' pages. It
+#: travels into every audit trail's cost basis, so the figure's age is visible
+#: on the artifact without opening this file — single source of truth for that
+#: date, cited by the comment above.
+PRICING_VERIFIED = "2026-07-31"
+
 PRICING: dict[tuple[str, str], dict[str, float]] = {
     ("deepseek", "deepseek-v4-flash"): {"prompt": 0.14, "completion": 0.28},
     ("deepseek", "deepseek-v4-pro"): {"prompt": 0.435, "completion": 0.87},
@@ -79,7 +87,12 @@ class LLMResponse:
     provider: str
     prompt_tokens: int
     completion_tokens: int
-    cost_usd: float
+    #: Derived USD cost, or ``None`` when this call's (provider, model) is
+    #: unpriced. ``None`` rather than ``0.0`` on purpose — an uncalculable cost is
+    #: not a bill of zero. Always ``None`` for the ``fake`` provider. The token
+    #: counts it derives from are a ``len//4`` estimate, so a number here is a
+    #: projection, never billing.
+    cost_usd: float | None
     #: Why the provider stopped generating, **verbatim and unnormalised**:
     #: Anthropic's ``stop_reason`` (``end_turn``, ``max_tokens``, ``refusal``,
     #: ``model_context_window_exceeded``, ...) or an OpenAI-compatible
@@ -107,12 +120,38 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
-def _calc_cost(provider: str, model: str, prompt_tokens: int, completion_tokens: int) -> float:
+def _calc_cost(
+    provider: str, model: str, prompt_tokens: int, completion_tokens: int
+) -> float | None:
+    """USD cost of one call from derived token counts, or ``None`` when unpriced.
+
+    ``None`` — not ``0.0`` — for a (provider, model) with no published rate here:
+    a run that could not be priced and one that genuinely cost nothing are
+    different facts, and ``0.0`` is a believable number that erases the
+    difference. A ``None`` cannot be read as a bill of zero.
+
+    The tokens fed in are themselves a ``len//4`` estimate (see
+    :func:`_estimate_tokens`), so a non-``None`` result is a derived projection,
+    never billed accounting.
+    """
     rates = PRICING.get((provider, model))
     if not rates:
-        return 0.0
+        return None
     cost = (prompt_tokens * rates["prompt"] + completion_tokens * rates["completion"]) / 1_000_000
     return round(cost, 6)
+
+
+#: Plain-language statement of how the usage figures are produced, recorded into
+#: the trail so it is honest on its own. Specific about the token estimate: a
+#: ``len//4`` heuristic is not a tokenizer, and it is used even when a real
+#: provider returns its own token usage — that usage is currently discarded (open
+#: item), so the counts are an estimate regardless of provider.
+_COST_BASIS_NOTE = (
+    "token counts are a len//4 estimate — not a tokenizer, and not the "
+    "provider's own usage even when it reports one; cost_usd = estimated tokens "
+    "x published rate, not billed; null when the (provider, model) pair has no "
+    "published rate here"
+)
 
 
 class EmptyCompletionError(RuntimeError):
@@ -156,13 +195,45 @@ class LLMClient:
         self._fake_script = fake_script
         self._fake_calls = 0
         self._client = None  # lazily constructed for real providers
-        self._totals = {"prompt": 0, "completion": 0, "cost_usd": 0.0, "calls": 0}
+        self._totals: dict[str, float | None] = {
+            "prompt": 0,
+            "completion": 0,
+            "cost_usd": 0.0,
+            "calls": 0,
+        }
         self._stop_reasons: list[str | None] = []
 
     @property
-    def totals(self) -> dict[str, float]:
-        """Accumulated usage across all calls: prompt, completion, cost_usd, calls."""
+    def totals(self) -> dict[str, float | None]:
+        """Accumulated usage across all calls: prompt, completion, cost_usd, calls.
+
+        ``cost_usd`` is ``None`` once any call was unpriced (always so for the
+        ``fake`` provider): an uncalculable total is left uncalculable, never
+        rounded down to ``0.0``. ``prompt``/``completion``/``calls`` are always
+        numbers.
+        """
         return dict(self._totals)
+
+    @property
+    def cost_basis(self) -> dict[str, object]:
+        """How this client's usage figures should be read: derived, not billed.
+
+        ``tokens_estimated`` and ``cost_derived`` are always true — the counts
+        are a ``len//4`` estimate and the cost is those tokens times a published
+        rate, never a provider invoice. ``priced`` is a property of the
+        (provider, model) pair, independent of how many calls ran: false means no
+        published rate here and therefore ``cost_usd`` is ``None``.
+        ``rates_verified`` carries the date the rates were last checked, so the
+        figure's age travels with it. Folded into the audit summary so a trail is
+        self-describing without this module in front of the reader.
+        """
+        return {
+            "tokens_estimated": True,
+            "cost_derived": True,
+            "priced": (self.provider, self.model) in PRICING,
+            "rates_verified": PRICING_VERIFIED,
+            "note": _COST_BASIS_NOTE,
+        }
 
     @property
     def stop_reasons(self) -> list[str | None]:
@@ -216,7 +287,12 @@ class LLMClient:
         cost = _calc_cost(self.provider, self.model, prompt_tokens, completion_tokens)
         self._totals["prompt"] += prompt_tokens
         self._totals["completion"] += completion_tokens
-        self._totals["cost_usd"] = round(self._totals["cost_usd"] + cost, 6)
+        # None is sticky: once a call is unpriced, the running total is
+        # uncalculable and stays None rather than resuming from a partial sum.
+        if cost is None or self._totals["cost_usd"] is None:
+            self._totals["cost_usd"] = None
+        else:
+            self._totals["cost_usd"] = round(self._totals["cost_usd"] + cost, 6)
         self._totals["calls"] += 1
         return LLMResponse(
             text=text,

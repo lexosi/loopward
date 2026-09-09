@@ -3,6 +3,7 @@
 import pytest
 
 from loopward.engine.llm_wrapper import (
+    PRICING_VERIFIED,
     EmptyCompletionError,
     LLMClient,
     _calc_cost,
@@ -55,14 +56,49 @@ def test_totals_accumulate():
 
 
 @pytest.mark.unit
-def test_cost_zero_for_unknown_model():
-    assert _calc_cost("fake", "fake-1", 1000, 1000) == 0.0
+def test_cost_is_none_not_zero_for_unknown_model():
+    # An unpriced (provider, model) yields None, not 0.0. A real zero and an
+    # uncalculable cost must not collapse to the same credible-looking number —
+    # a reader cannot tell "cost nothing" from "could not be priced" if both read 0.0.
+    assert _calc_cost("fake", "fake-1", 1000, 1000) is None
+
+
+@pytest.mark.unit
+def test_priced_zero_is_distinct_from_uncalculable():
+    # Priced pair, zero tokens -> a genuine 0.0 (a float). Unpriced pair -> None.
+    # The two are distinguishable; against HEAD both are 0.0 and are not.
+    assert _calc_cost("deepseek", "deepseek-v4-flash", 0, 0) == 0.0
+    assert _calc_cost("fake", "fake-1", 0, 0) is None
 
 
 @pytest.mark.unit
 def test_cost_nonzero_for_known_model():
     cost = _calc_cost("deepseek", "deepseek-v4-flash", 1_000_000, 1_000_000)
     assert cost == pytest.approx(0.14 + 0.28)
+
+
+@pytest.mark.unit
+def test_fake_response_and_totals_cost_is_none():
+    # The fake provider is unpriced: its per-call cost and its running total are
+    # None (uncalculable), never 0.0.
+    llm = LLMClient(provider="fake", fake_script=["HIGH: a", "LOW: b"])
+    out = llm.complete([{"role": "user", "content": "x"}])
+    assert out.cost_usd is None
+    llm.complete([{"role": "user", "content": "y"}])
+    assert llm.totals["cost_usd"] is None
+
+
+@pytest.mark.unit
+def test_cost_basis_declares_estimation_and_verification_date():
+    # The wrapper describes how its numbers are produced: tokens are a len//4
+    # estimate (true regardless of any provider-side count), cost is derived, and
+    # the rates carry the date they were last verified.
+    llm = LLMClient(provider="fake", fake_script=["HIGH: a"])
+    basis = llm.cost_basis
+    assert basis["tokens_estimated"] is True
+    assert basis["priced"] is False  # fake is unpriced
+    assert basis["rates_verified"] == PRICING_VERIFIED
+    assert "len//4" in basis["note"]
 
 
 @pytest.mark.unit
