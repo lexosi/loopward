@@ -131,9 +131,9 @@ def test_audit_md_shows_them_too(tmp_path):
     the only way this reaches a markdown reader at all.
     """
     audit = AuditLog(run_id="test", base_dir=tmp_path)
-    result = _deepseek_orch(
-        audit, [("HIGH: cut off her", "length"), ("CONFIRM 1", "stop")]
-    ).run(DIFF)
+    result = _deepseek_orch(audit, [("HIGH: cut off her", "length"), ("CONFIRM 1", "stop")]).run(
+        DIFF
+    )
 
     md = (pathlib.Path(result.run_dir) / "audit.md").read_text(encoding="utf-8")
     assert "- **provider_stop_reasons**: length, stop" in md

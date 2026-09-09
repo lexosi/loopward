@@ -392,15 +392,11 @@ def _fake_heuristic(messages: list[Message], task: str | None = None) -> str:
     if task == TASK_VERIFY:
         # One line per listed finding: the adjudication has to cover 1..n or
         # the verifier rejects it as unparseable.
-        listing = "\n".join(
-            m.get("content", "") for m in messages if m.get("role") == "user"
-        )
+        listing = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
         n = max(1, len(_LISTED_RE.findall(listing)))
         return "\n".join(f"CONFIRM {i}" for i in range(1, n + 1))
 
-    last_user = next(
-        (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
-    )
+    last_user = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
     findings: list[str] = []
     if "<=" in last_user and "expir" in last_user.lower():
         findings.append("HIGH: token expiry uses `<=`; expired-at-boundary tokens pass. Use `<`.")

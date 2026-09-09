@@ -86,9 +86,7 @@ STOP_TOTAL_CAP = "total_cap"  # MAX_TOTAL_ATTEMPTS reached first
 # verbatim rather than guessing at one, because a vague sentence that sounds
 # right is the failure this mapping exists to stop.
 _EXHAUSTED_SUMMARY = {
-    STOP_STRATEGIES_EXHAUSTED: (
-        "review exhausted all strategies without parseable findings"
-    ),
+    STOP_STRATEGIES_EXHAUSTED: ("review exhausted all strategies without parseable findings"),
     STOP_TRACKER_BUDGET: (
         "review stopped when its attempt budget ran out without parseable findings"
     ),
@@ -336,8 +334,10 @@ class Orchestrator:
         # here means `attempts` never met `budget`, so `tracker_budget` cannot
         # have exceeded the ceiling: this exit is always an ordinary exhaustion,
         # never a refused configuration.
-        return None, "", self._record_stop(
-            attempts, budget, tracker_budget, strategies_exhausted=True
+        return (
+            None,
+            "",
+            self._record_stop(attempts, budget, tracker_budget, strategies_exhausted=True),
         )
 
     def _review_chunked(self, diff: str) -> list[Finding]:
@@ -385,9 +385,7 @@ class Orchestrator:
             f"files cannot be seen this way",
             chunks=len(pieces),
             unreadable_pieces=unreadable,
-            coverage=(
-                "partial: each file reviewed alone; a cross-file defect is invisible"
-            ),
+            coverage=("partial: each file reviewed alone; a cross-file defect is invisible"),
         )
         return merged
 
@@ -673,9 +671,7 @@ class Orchestrator:
                 },
                 # The full traceback lives here so the entry points never have
                 # to print one at the user.
-                traceback="".join(
-                    traceback.format_exception(type(exc), exc, exc.__traceback__)
-                ),
+                traceback="".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
             )
             self._fold_usage()
             self._fold_provider_stop_reasons()

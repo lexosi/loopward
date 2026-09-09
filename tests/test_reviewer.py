@@ -70,9 +70,7 @@ REJECTED_DECORATION = [
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "label,line", REJECTED_DECORATION, ids=[c[0] for c in REJECTED_DECORATION]
-)
+@pytest.mark.parametrize("label,line", REJECTED_DECORATION, ids=[c[0] for c in REJECTED_DECORATION])
 def test_decoration_around_the_tag_is_rejected_on_purpose(label, line):
     with pytest.raises(ReviewParseError):
         parse_findings(line)
@@ -95,8 +93,7 @@ NO_TAG_AT_ALL = [
     ),
     (
         "prose",
-        "The most severe issue is the expiry boundary change. "
-        "Secondly, there is an off-by-one.",
+        "The most severe issue is the expiry boundary change. Secondly, there is an off-by-one.",
     ),
     ("severity word in parens", "1. (High) expiry boundary\n2. (Medium) off-by-one"),
     ("heading and bold", "### Issues\n**Critical** - expiry check\n**High** - off-by-one"),

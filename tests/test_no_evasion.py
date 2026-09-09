@@ -38,6 +38,7 @@ def _findings() -> list[Finding]:
 
 # ---- F1: stop-gate Approval token -------------------------------------------
 
+
 @pytest.mark.unit
 def test_verify_without_approval_is_typeerror():
     # NEGATIVE CONTROL: no approval at all -> missing-arg TypeError, cannot run.
@@ -82,6 +83,7 @@ def test_only_gate_minted_approval_proceeds():
 
 # ---- F2: anti-loop AttemptOutcome token -------------------------------------
 
+
 @pytest.mark.unit
 def test_attemptoutcome_hand_constructed_is_rejected():
     with pytest.raises(PermissionError):
@@ -105,6 +107,7 @@ def test_only_tracker_mints_class_jump_grant():
 
 # ---- F2: agents are not the public surface ----------------------------------
 
+
 @pytest.mark.unit
 def test_public_entry_is_orchestrator_not_agents():
     import loopward
@@ -118,6 +121,7 @@ def test_public_entry_is_orchestrator_not_agents():
 # ---- Adversarial forgery: the bypass a prior review found -------------------
 # These prove the tokens are object-capabilities (identity-registry membership),
 # not isinstance checks: a subclass or an object.__new__ instance is rejected.
+
 
 @pytest.mark.unit
 def test_approval_cannot_be_subclassed():

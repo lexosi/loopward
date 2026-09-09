@@ -256,8 +256,12 @@ class StopGate:
 
         if self.mode == GATE_AUTO:
             decision = Decision(
-                phase, APPROVE, self.mode, "auto-approved",
-                approval=_mint_approval(phase), **who,
+                phase,
+                APPROVE,
+                self.mode,
+                "auto-approved",
+                approval=_mint_approval(phase),
+                **who,
             )
         elif self.mode == GATE_DENY:
             decision = Decision(phase, DENY, self.mode, "deny mode", **who)
@@ -265,12 +269,20 @@ class StopGate:
             answer = self._prompter(phase, summary)
             if answer in ("y", "yes"):
                 decision = Decision(
-                    phase, APPROVE, self.mode, "human approved",
-                    approval=_mint_approval(phase), **who,
+                    phase,
+                    APPROVE,
+                    self.mode,
+                    "human approved",
+                    approval=_mint_approval(phase),
+                    **who,
                 )
             else:
                 decision = Decision(
-                    phase, DENY, self.mode, f"human declined ({answer!r})", **who,
+                    phase,
+                    DENY,
+                    self.mode,
+                    f"human declined ({answer!r})",
+                    **who,
                 )
 
         if self._audit is not None:

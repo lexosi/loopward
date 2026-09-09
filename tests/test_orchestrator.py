@@ -1,6 +1,5 @@
 """Integration tests for the orchestrator (fake provider, offline)."""
 
-
 import re
 
 import pytest
@@ -150,8 +149,7 @@ def test_injected_tracker_still_records_attempts(tmp_path):
     """
     audit = _audit(tmp_path)
     llm = LLMClient(provider="fake", fake_script=_force_class_jump)
-    Orchestrator(llm, StopGate(mode="auto"), audit=audit,
-                 tracker=AttemptTracker()).run(DIFF)
+    Orchestrator(llm, StopGate(mode="auto"), audit=audit, tracker=AttemptTracker()).run(DIFF)
     assert [e for e in audit.events if e.kind == "attempt"]
 
 
@@ -197,8 +195,12 @@ def test_injected_tracker_cannot_spin(tmp_path):
     """A tracker that never grants a class-jump must not buy an unbounded loop."""
     reply, calls = _never_parses()
     llm = LLMClient(provider="fake", fake_script=reply)
-    result = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path),
-                          tracker=AttemptTracker(max_attempts=10**9)).run(DIFF)
+    result = Orchestrator(
+        llm,
+        StopGate(mode="auto"),
+        audit=_audit(tmp_path),
+        tracker=AttemptTracker(max_attempts=10**9),
+    ).run(DIFF)
     assert result.status == STATUS_EXHAUSTED
     assert calls["n"] <= orch_mod.MAX_TOTAL_ATTEMPTS
 
@@ -216,8 +218,9 @@ def test_injected_strategies_cannot_spin(tmp_path):
     """
     reply, calls = _never_parses()
     llm = LLMClient(provider="fake", fake_script=reply)
-    result = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path),
-                          strategies=STRATEGIES * (10**6)).run(DIFF)
+    result = Orchestrator(
+        llm, StopGate(mode="auto"), audit=_audit(tmp_path), strategies=STRATEGIES * (10**6)
+    ).run(DIFF)
     assert result.status == STATUS_EXHAUSTED
     assert calls["n"] <= orch_mod.MAX_TOTAL_ATTEMPTS
 
@@ -260,8 +263,7 @@ def test_review_rejects_a_verdict_the_tracker_never_minted(tmp_path):
     """A duck-typed outcome is refused where review reads it, not obeyed."""
     reply, _ = _never_parses()
     llm = LLMClient(provider="fake", fake_script=reply)
-    orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path),
-                        tracker=DuckTracker())
+    orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path), tracker=DuckTracker())
     with pytest.raises(TypeError, match="did not mint"):
         orch.run(DIFF)
 
@@ -269,14 +271,14 @@ def test_review_rejects_a_verdict_the_tracker_never_minted(tmp_path):
 @pytest.mark.integration
 def test_verify_rejects_a_verdict_the_tracker_never_minted(tmp_path):
     """The same guard on the verify loop: one check, not half of one."""
+
     def reply(_messages: list[Message], task: str | None) -> str:
         # Review parses; the adjudication does not cover finding 1, so the
         # verify loop records a failure and reads the verdict.
         return "nothing adjudicated" if task == TASK_VERIFY else "HIGH: real finding"
 
     llm = LLMClient(provider="fake", fake_script=reply)
-    orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path),
-                        tracker=DuckTracker())
+    orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path), tracker=DuckTracker())
     with pytest.raises(TypeError, match="did not mint"):
         orch.run(DIFF)
 
@@ -294,12 +296,13 @@ def test_a_genuine_verdict_still_passes_the_check(tmp_path):
 
 @pytest.mark.integration
 def test_verify_event_names_which_findings_were_dropped(tmp_path):
-    """"The audit trail keeps both" was a claim the counters could not support.
+    """ "The audit trail keeps both" was a claim the counters could not support.
 
     `verify: confirmed 1, rejected 1` tells a reader that something was dropped
     and never which one. The review event already carried its findings in
     `data`; the verify event now does the same.
     """
+
     def reply(_messages: list[Message], task: str | None) -> str:
         if task == TASK_VERIFY:
             return "CONFIRM 1\nREJECT 2"
@@ -350,8 +353,9 @@ def test_strategies_exhausted_is_recorded_like_any_other_cut_off(tmp_path):
     # One kind, one schema. A trail reader must not learn two shapes for
     # `anti_loop` depending on which exit of the same loop produced it.
     ceiling = _audit(tmp_path)
-    Orchestrator(llm, StopGate(mode="auto"), audit=ceiling,
-                 tracker=AttemptTracker(max_attempts=10**9)).run(DIFF)
+    Orchestrator(
+        llm, StopGate(mode="auto"), audit=ceiling, tracker=AttemptTracker(max_attempts=10**9)
+    ).run(DIFF)
     other = next(e for e in ceiling.events if e.kind == "anti_loop")
     assert other.data["stop_reason"] == orch_mod.STOP_TOTAL_CAP
     assert set(stops[0].data) == set(other.data)
@@ -412,7 +416,9 @@ def test_every_stop_reason_gets_its_own_summary(tmp_path):
 
     exhausted = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path)).run(DIFF)
     ceiling = Orchestrator(
-        llm, StopGate(mode="auto"), audit=_audit(tmp_path),
+        llm,
+        StopGate(mode="auto"),
+        audit=_audit(tmp_path),
         tracker=AttemptTracker(max_attempts=10**9),
     ).run(DIFF)
 

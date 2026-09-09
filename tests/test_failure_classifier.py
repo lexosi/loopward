@@ -325,8 +325,7 @@ def test_the_measured_failure_now_routes_to_a_per_file_review(tmp_path):
             return handler(system or "", messages)
 
     two_files = (
-        "--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x\n+y\n"
-        "--- a/b.py\n+++ b/b.py\n@@ -1 +1 @@\n-p\n+q\n"
+        "--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x\n+y\n--- a/b.py\n+++ b/b.py\n@@ -1 +1 @@\n-p\n+q\n"
     )
 
     llm = LLMClient(provider="claude", model="claude-haiku-4-5")

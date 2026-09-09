@@ -34,9 +34,7 @@ PHASE_VERIFY = "verify"
 
 #: One adjudication per line, anchored at the start of it. A verdict mentioned
 #: mid-sentence ("I would never REJECT 2") is commentary, not a decision.
-_ADJUDICATION_RE = re.compile(
-    r"^\s*(CONFIRM|REJECT)\s+(\d+)\b", re.IGNORECASE | re.MULTILINE
-)
+_ADJUDICATION_RE = re.compile(r"^\s*(CONFIRM|REJECT)\s+(\d+)\b", re.IGNORECASE | re.MULTILINE)
 
 
 class VerifyParseError(ValueError):

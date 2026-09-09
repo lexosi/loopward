@@ -334,8 +334,8 @@ class AuditLog:
         """
         preferred = self._run_dir
         for suffix in range(MAX_DIR_COLLISIONS + 1):
-            candidate = preferred if suffix == 0 else preferred.with_name(
-                f"{preferred.name}-{suffix}"
+            candidate = (
+                preferred if suffix == 0 else preferred.with_name(f"{preferred.name}-{suffix}")
             )
             try:
                 os.makedirs(candidate, exist_ok=False)
