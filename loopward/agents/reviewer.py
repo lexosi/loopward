@@ -144,20 +144,47 @@ class Reviewer:
     def __init__(self, llm: LLMClient) -> None:
         self._llm = llm
 
-    def build_messages(self, diff: str, strategy: str) -> list[Message]:
-        try:
-            instruction = _STRATEGY_INSTRUCTIONS[strategy]
-        except KeyError:
-            raise UnknownStrategyError(strategy) from None
+    def build_messages(
+        self, diff: str, strategy: str = "concise", *, instruction: str | None = None
+    ) -> list[Message]:
+        """Build the review messages for ``diff``.
+
+        ``instruction`` overrides the strategy lookup entirely. It is how a
+        caller reviews with a prompt that is deliberately NOT one of the ordered
+        strategies — chunk-diff's ``CHUNK_DIFF_INSTRUCTION`` is injected here by
+        the orchestrator so it never has to live in ``_STRATEGY_INSTRUCTIONS``
+        (which would grow ``len(STRATEGIES)`` and move the anti-loop's bound) and
+        so this module never imports the agent that defines it (which would cut a
+        cycle). When ``instruction`` is ``None`` the strategy table is consulted
+        and an unknown strategy raises, exactly as before.
+        """
+        if instruction is None:
+            try:
+                instruction = _STRATEGY_INSTRUCTIONS[strategy]
+            except KeyError:
+                raise UnknownStrategyError(strategy) from None
         return [
             {"role": "system", "content": f"{instruction}\n{DIFF_IS_DATA}"},
             {"role": "user", "content": f"Review this diff:\n\n<diff>\n{diff}\n</diff>"},
         ]
 
-    def review(self, diff: str, strategy: str = "concise") -> tuple[list[Finding], int]:
-        """Return ``(findings, dropped_lines)``, or raise on unusable output."""
+    def review(
+        self,
+        diff: str,
+        strategy: str = "concise",
+        *,
+        instruction: str | None = None,
+        task: str | None = None,
+    ) -> tuple[list[Finding], int]:
+        """Return ``(findings, dropped_lines)``, or raise on unusable output.
+
+        ``instruction`` and ``task`` are injected only by the chunked review
+        path; left as ``None`` this behaves identically to the ordered-strategy
+        call, deriving the task label from ``strategy``.
+        """
+        label = task if task is not None else f"{TASK_REVIEW}:{strategy}"
         resp = self._llm.complete(
-            self.build_messages(diff, strategy), task=f"{TASK_REVIEW}:{strategy}"
+            self.build_messages(diff, strategy, instruction=instruction), task=label
         )
         findings, dropped = scan_findings(resp.text)
         if not findings:

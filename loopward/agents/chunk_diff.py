@@ -29,12 +29,14 @@ re-splitting a piece returns that same piece unchanged.
 
 One further limit is real but NOT modelled here: a single file whose own diff
 still overflows the context window. At that point there is no smaller unit to
-split into — one file is already the floor. That is observable only when
-something reviews a piece and the provider refuses it, which is a later unit;
-until there is a caller, a symbol for it would be machinery with no consumer, so
-it is documented here and built when it is needed.
+split into — one file is already the floor. The chunked review has a caller now
+and does not smooth this over: a piece whose own review overflows raises straight
+through to the crash path, the same as any unmapped failure. A dedicated symbol
+for "one file is still too big" is built when it earns one.
 
-Nothing in production reaches this module yet: chunk-diff is built, not wired.
+The orchestrator's review loop reaches this module when a context-length
+overflow is classified: it splits the diff and reviews the pieces one at a time
+(``Orchestrator._review_chunked``), ending the run in ``partial_review``.
 """
 
 from __future__ import annotations

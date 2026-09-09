@@ -13,11 +13,12 @@ pair. The repo's own fixtures (``demo.SAMPLE_DIFF``, ``bench.HARD_DIFF``) use th
 bare pair with no ``diff --git`` line, so a splitter that only understood git
 headers would pass a mixed test and still be blind to every fixture in the tree.
 
-No production code reaches any of this yet: chunk-diff is built, not wired. The
-review-time limit — a single file whose own diff still overflows the context
-window, where no further splitting is possible — is not modelled here. It is
-observable only when something reviews a chunk, which is a later unit; until
-there is a caller, a symbol for it would be machinery with no consumer.
+The orchestrator now reaches this on a context-length overflow — the wiring and
+its ``partial_review`` outcome are tested in ``tests/test_chunk_route.py``; this
+file pins the splitter itself. The review-time limit — a single file whose own
+diff still overflows the context window, where no further splitting is possible —
+is still not modelled here: a piece that overflows on review raises through to
+the crash path, and a dedicated symbol for it is built when it earns one.
 """
 
 import pytest

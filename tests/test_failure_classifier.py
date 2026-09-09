@@ -1,11 +1,13 @@
-"""A wire signal becomes a failure class — and an UNKNOWN leaves its raw signal.
+"""A wire signal becomes a failure class, and the failure class steers the run.
 
-Sibling of ``test_the_run_is_byte_identical_whatever_the_reason_says``. That one
-proves nothing branches on the provider's stop reason; this one proves the crash
-path now *classifies* the failure and, when it cannot, records the raw wire
-signal instead of swallowing it — while still doing exactly what it did before:
-finalize as ``crashed`` and re-raise. A classified failure never lands in a
-strategy in this unit; the map only declares where unit 3 will send it.
+The crash path classifies a failed run and, when it cannot, records the raw wire
+signal instead of swallowing it. The one measured class
+(``context_length_exceeded``) is now consumed by the review loop's upstream
+capture point: it reviews the diff a file at a time and the run ends
+``partial_review`` (see ``test_the_measured_failure_now_routes_to_a_per_file_review``
+below, and ``tests/test_chunk_route.py`` for the mechanism). Everything the table
+does not place stays UNKNOWN: it re-raises, finalizes ``crashed``, and leaves its
+raw signal on the trail.
 
 Detection is by WIRE SIGNAL, never by exception class: the anthropic 1.4.0
 ``ValueError("Streaming is required...")`` proves the class is not stable, so the
@@ -14,6 +16,7 @@ classifier reads status/body/message off the exception and matches a data table.
 
 import json
 import pathlib
+import re
 
 import pytest
 
@@ -55,6 +58,12 @@ class _StubAnthropic400(Exception):
 
 def _trail(run_dir: str) -> dict:
     return json.loads((pathlib.Path(run_dir) / "audit.json").read_text(encoding="utf-8"))
+
+
+def _resp(text: str, stop_reason: str | None = None):
+    """A minimal Anthropic-shaped response: ``.content`` blocks + ``.stop_reason``."""
+    block = type("_Block", (), {"type": "text", "text": text})()
+    return type("_Resp", (), {"content": [block], "stop_reason": stop_reason})()
 
 
 # --- the table and the map: one measured entry each -------------------------
@@ -286,31 +295,48 @@ def test_an_unknown_failure_leaves_its_raw_signal_in_the_trail(tmp_path):
 
 
 @pytest.mark.integration
-def test_the_measured_failure_is_recorded_as_its_class_but_still_crashes(tmp_path):
-    """A KNOWN class is recorded — and unit 2 still does nothing with it.
+def test_the_measured_failure_now_routes_to_a_per_file_review(tmp_path):
+    """The measured class is CONSUMED here: it reviews the diff a file at a time.
 
-    Behaviour is unchanged: the run still crashes and the original exception is
-    re-raised. The map declares a destination; this unit does not act on it.
+    C3 is where the map's one destination is finally acted on. A context-length
+    400 on the whole-diff review no longer crashes; it splits the diff and
+    reviews each file separately, ending in ``partial_review`` — not ``ok`` (a
+    per-file review cannot see a cross-file defect), not ``crashed``.
+
+    A REAL two-file diff is used on purpose. A headerless one would fail to split
+    and crash for an unrelated reason (see
+    ``tests/test_chunk_route.py::...headerless...``), and a green for the wrong
+    reason is worse than a red.
     """
 
-    class _BoomClient:
-        class messages:  # noqa: N801
-            @staticmethod
-            def create(**kwargs):
-                raise _StubAnthropic400(OVERFLOW_MSG)
+    def handler(system, messages):
+        if "adjudicate" in system.lower():
+            listing = "\n".join(m["content"] for m in messages if m.get("role") == "user")
+            n = max(1, len(re.findall(r"^\s*(\d+)\.\s", listing, re.MULTILINE)))
+            return _resp("\n".join(f"CONFIRM {i}" for i in range(1, n + 1)))
+        if "one file from a larger diff" in system.lower():
+            return _resp("HIGH: issue in this file.")
+        raise _StubAnthropic400(OVERFLOW_MSG)  # the whole-diff review overflows
+
+    class _Messages:
+        @staticmethod
+        def create(model, max_tokens, system, messages):
+            return handler(system or "", messages)
+
+    two_files = (
+        "--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x\n+y\n"
+        "--- a/b.py\n+++ b/b.py\n@@ -1 +1 @@\n-p\n+q\n"
+    )
 
     llm = LLMClient(provider="claude", model="claude-haiku-4-5")
-    llm._client = _BoomClient()  # bypass lazy SDK construction, no key needed
+    llm._client = type("_Client", (), {"messages": _Messages()})()
     audit = AuditLog(run_id="test", base_dir=tmp_path)
     orch = Orchestrator(llm, StopGate(mode="auto"), audit=audit)
 
-    with pytest.raises(_StubAnthropic400):
-        orch.run("some diff")
+    result = orch.run(two_files)  # no longer raises
 
-    env = _trail(audit.run_dir_on_disk)
-    assert env["summary"]["status"] == STATUS_CRASHED  # unchanged: no jump, no retry
-    result = [e for e in env["events"] if e["kind"] == "result"][-1]
-    assert result["data"]["failure_class"] == CONTEXT_LENGTH_EXCEEDED
-    sig = result["data"]["wire_signal"]
-    assert sig["http_status"] == 400
-    assert sig["body_type"] == "invalid_request_error"
+    env = _trail(result.run_dir)
+    assert env["summary"]["status"] == "partial_review"
+    assert result.status != STATUS_CRASHED
+    # the run reviewed each file: two confirmed findings from the per-piece pass
+    assert len(result.verify.confirmed) == 2

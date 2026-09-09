@@ -28,12 +28,19 @@ import sys
 import traceback
 from dataclasses import dataclass
 
+from loopward.agents.chunk_diff import CHUNK_DIFF_INSTRUCTION, split_diff
 from loopward.agents.reviewer import STRATEGIES, Finding, Reviewer, ReviewParseError
 from loopward.agents.verifier import Verifier, VerifyParseError, VerifyResult
 from loopward.engine.anti_loop import AttemptOutcome, AttemptTracker, is_genuine_outcome
 from loopward.engine.audit import AuditAlreadyFinalizedError, AuditLog
-from loopward.engine.failure_classifier import classify_signal, extract_signal
-from loopward.engine.llm_wrapper import LLMClient
+from loopward.engine.failure_classifier import (
+    CHUNK_DIFF_STRATEGY,
+    NEXT_STRATEGY,
+    classify,
+    classify_signal,
+    extract_signal,
+)
+from loopward.engine.llm_wrapper import TASK_REVIEW, EmptyCompletionError, LLMClient
 from loopward.engine.stop_gate import StopGate
 
 REVIEW_SUBTASK = "review-parse"
@@ -47,6 +54,13 @@ STATUS_EXHAUSTED = "exhausted"
 #: written, because "we do not know what happened" is the one thing an audit
 #: trail must never say about a run that happened.
 STATUS_CRASHED = "crashed"
+#: The diff overflowed the context window whole, so it was reviewed one file at
+#: a time. The review reached a verdict, but its coverage is incomplete: a defect
+#: that spans two files cannot be seen when each file is reviewed alone. NOT
+#: `ok` — returning `ok` would certify coverage that did not happen. This status
+#: carries only that consequence; the trail's `chunk_review` event carries the
+#: mechanism (how many pieces, which were unreadable).
+STATUS_PARTIAL_REVIEW = "partial_review"
 
 #: Absolute ceiling on review attempts in a single run, whatever the injected
 #: tracker and strategy list add up to. This is a SPEND limit, not a design
@@ -157,6 +171,13 @@ class Orchestrator:
         self._audit.record("phase", "review: start")
         findings, strategy, stop_reason = self._review_with_anti_loop(diff)
 
+        # The review was carried out one file at a time after a context-length
+        # overflow. It reached findings, so it is not an exhaustion; but the run
+        # cannot end `ok`, because a per-file review does not see cross-file
+        # defects. The flag rides the existing `strategy` channel — no widened
+        # return signature — and decides only the final status and summary.
+        partial = strategy == CHUNK_DIFF_STRATEGY
+
         if findings is None:
             summary = _EXHAUSTED_SUMMARY.get(
                 stop_reason,
@@ -172,9 +193,15 @@ class Orchestrator:
         # these are the reviewer's claims and nothing has adjudicated them. A
         # trail that stored them unmarked would be filing the generator's
         # output as if it were the evaluator's verdict.
+        review_message = (
+            f"review: partial via chunk-diff — {len(findings)} finding(s) across "
+            f"separately reviewed files"
+            if partial
+            else f"review: ok via strategy '{strategy}' ({len(findings)} findings)"
+        )
         self._audit.record(
             "phase",
-            f"review: ok via strategy '{strategy}' ({len(findings)} findings)",
+            review_message,
             stage="review",
             verified=False,
             findings=[str(f) for f in findings],
@@ -211,13 +238,21 @@ class Orchestrator:
             rejected=[str(f) for f in verify.rejected],
         )
 
-        summary = (
-            f"{len(verify.confirmed)} confirmed finding(s)"
-            + (", blocking" if verify.has_blocking else ", none blocking")
-        )
+        blocking = ", blocking" if verify.has_blocking else ", none blocking"
+        if partial:
+            final_status = STATUS_PARTIAL_REVIEW
+            summary = (
+                f"{len(verify.confirmed)} confirmed finding(s){blocking}; partial "
+                f"review — the diff was reviewed one file at a time after a "
+                f"context-length overflow, so a defect spanning two files was not "
+                f"covered"
+            )
+        else:
+            final_status = STATUS_OK
+            summary = f"{len(verify.confirmed)} confirmed finding(s){blocking}"
         self._audit.record("result", summary)
-        run_dir = self._record_usage_and_finalize(STATUS_OK, summary)
-        return RunResult(STATUS_OK, findings, verify, str(run_dir), summary)
+        run_dir = self._record_usage_and_finalize(final_status, summary)
+        return RunResult(final_status, findings, verify, str(run_dir), summary)
 
     # ---- internals --------------------------------------------------------
 
@@ -245,7 +280,25 @@ class Orchestrator:
             strategy = self._strategies[strat_idx]
             try:
                 findings, dropped = self._reviewer.review(diff, strategy=strategy)
-            except ReviewParseError:
+            except Exception as exc:
+                # Upstream capture point. A parse failure or a blank completion is
+                # a spent attempt (an empty reply is a failed attempt, the same as
+                # an unparseable one — it used to cross this loop untouched and
+                # crash the run). Everything else is classified by WIRE SIGNAL,
+                # never by exception class (see failure_classifier): the ONE
+                # mapped class routes to a per-file review, and anything else —
+                # UNKNOWN included — is re-raised untouched, so a failure that
+                # kills the run today still does, with its raw signal on the crash
+                # trail. Dropping that re-raise would make the widening swallow
+                # exceptions; test_chunk_route guards it, and crash_trail's
+                # missing-key test depends on it.
+                if not isinstance(exc, (ReviewParseError, EmptyCompletionError)):
+                    if (
+                        NEXT_STRATEGY.get(classify(exc, getattr(self._llm, "provider", None)))
+                        == CHUNK_DIFF_STRATEGY
+                    ):
+                        return self._review_chunked(diff), CHUNK_DIFF_STRATEGY, ""
+                    raise
                 attempts += 1
                 outcome = self._record_failure(REVIEW_SUBTASK, strategy)
                 if outcome.must_class_jump:
@@ -287,6 +340,57 @@ class Orchestrator:
             attempts, budget, tracker_budget, strategies_exhausted=True
         )
 
+    def _review_chunked(self, diff: str) -> list[Finding]:
+        """Review a too-large diff one file at a time, and return the merged findings.
+
+        Reached only from the review loop's capture point, for the one mapped
+        failure class. It replaces the review phase and nothing else: the merged
+        findings flow on to the same gate and verifier as an ordinary review, and
+        the verifier renumbers them 1..n when it adjudicates.
+
+        Two limits are deliberately NOT smoothed over, both by letting
+        :func:`split_diff` raise straight through to the crash path:
+
+        - a diff with no usable file header (:class:`MalformedDiffError`), and
+        - more than ``MAX_CHUNKS`` files (:class:`TooManyFilesToChunk`).
+
+        Neither becomes ``partial_review``: a run that reviewed nothing must not
+        claim a partial review. The crash trail carries the cause — for the file
+        cap, the count it saw and the cap it exceeded — which is what marks a
+        declared limit apart from a silent truncation.
+
+        Each piece gets ONE attempt, no retry: a piece whose reply will not parse
+        (or is blank) is recorded as unreadable and the review moves on. The trail
+        names how many pieces there were, which were unreadable, and the blind
+        spot the split cannot cover.
+        """
+        pieces = split_diff(diff)  # Malformed / TooManyFiles propagate -> crash
+        merged: list[Finding] = []
+        unreadable: list[int] = []
+        for idx, piece in enumerate(pieces):
+            try:
+                found, _dropped = self._reviewer.review(
+                    piece,
+                    instruction=CHUNK_DIFF_INSTRUCTION,
+                    task=f"{TASK_REVIEW}:{CHUNK_DIFF_STRATEGY}",
+                )
+            except (ReviewParseError, EmptyCompletionError):
+                unreadable.append(idx)  # one chance per piece, no retry
+                continue
+            merged.extend(found)
+        self._audit.record(
+            "chunk_review",
+            f"context-length overflow: reviewed {len(pieces)} file-piece(s) "
+            f"separately, {len(unreadable)} unreadable; a defect spanning two "
+            f"files cannot be seen this way",
+            chunks=len(pieces),
+            unreadable_pieces=unreadable,
+            coverage=(
+                "partial: each file reviewed alone; a cross-file defect is invisible"
+            ),
+        )
+        return merged
+
     def _verify_with_anti_loop(
         self, findings: list[Finding], diff: str, approval: object
     ) -> VerifyResult | None:
@@ -303,7 +407,13 @@ class Orchestrator:
         while attempts < budget:
             try:
                 return self._verifier.verify(findings, diff, approval)
-            except VerifyParseError as exc:
+            except (VerifyParseError, EmptyCompletionError) as exc:
+                # A blank adjudication is a failed attempt, symmetric with the
+                # review loop — it used to cross this loop untouched and crash the
+                # run. The failure-class map is NOT consulted here: chunk-diff is a
+                # review strategy with no verify equivalent, so verify widens only
+                # for the empty completion and any other exception propagates,
+                # exactly as before.
                 attempts += 1
                 last = str(exc)
                 outcome = self._record_failure(VERIFY_SUBTASK, VERIFY_STRATEGY)

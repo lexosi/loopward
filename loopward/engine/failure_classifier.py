@@ -4,11 +4,12 @@ Pure and caller-agnostic on purpose. :func:`classify` takes an exception (and th
 provider whose endpoint answered) and returns a failure-class string. It holds no
 reference to whoever called it, reads nothing but the exception, and never raises.
 
-Why it is written this way: the one place that catches a failed run today,
-``Orchestrator._finalize_crashed``, records and *re-raises* — it cannot act on a
-verdict, only file one. Unit 3 needs a capture point *upstream* that can retry or
-switch strategy, and it will call this **same** function from there. Written
-isolated, that is one more call site, not a refactor.
+Why it is written this way: it has two call sites, both reading the same table.
+``Orchestrator._finalize_crashed`` records a failed run and *re-raises* — it can
+only file a verdict, not act on one. The review loop's upstream capture point
+(``Orchestrator._review_with_anti_loop``) does act: it classifies the same way
+and routes the one mapped class to a per-file review. Written isolated, the
+second call site was one more call, not a refactor.
 
 Detection is by WIRE SIGNAL, never by exception class
 -----------------------------------------------------

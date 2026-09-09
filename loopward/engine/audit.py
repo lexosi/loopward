@@ -95,7 +95,9 @@ class AuditEvent:
     # validates it and no test asserts the set, so it is only as true as the
     # last person to add an event. `review_parse` was emitted for several
     # commits before it was written down here.
-    kind: str  # phase | attempt | class_jump | review_parse | anti_loop | gate | result
+    # phase | attempt | class_jump | review_parse | chunk_review | anti_loop |
+    # gate | result
+    kind: str
     message: str
     data: dict[str, Any] = field(default_factory=dict)
 
