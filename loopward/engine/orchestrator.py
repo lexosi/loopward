@@ -30,7 +30,7 @@ from dataclasses import dataclass
 
 from loopward.agents.chunk_diff import CHUNK_DIFF_INSTRUCTION, split_diff
 from loopward.agents.reviewer import STRATEGIES, Finding, Reviewer, ReviewParseError
-from loopward.agents.verifier import Verifier, VerifyParseError, VerifyResult
+from loopward.agents.verifier import PHASE_VERIFY, Verifier, VerifyParseError, VerifyResult
 from loopward.engine.anti_loop import AttemptOutcome, AttemptTracker, is_genuine_outcome
 from loopward.engine.audit import AuditAlreadyFinalizedError, AuditLog
 from loopward.engine.failure_classifier import (
@@ -41,7 +41,7 @@ from loopward.engine.failure_classifier import (
     extract_signal,
 )
 from loopward.engine.llm_wrapper import TASK_REVIEW, EmptyCompletionError, LLMClient
-from loopward.engine.stop_gate import StopGate
+from loopward.engine.stop_gate import StopGate, consume_approval
 
 REVIEW_SUBTASK = "review-parse"
 VERIFY_SUBTASK = "verify-parse"
@@ -208,7 +208,7 @@ class Orchestrator:
         )
 
         gate_summary = f"{len(findings)} findings ready to verify"
-        decision = self._gate.request("verify", gate_summary)
+        decision = self._gate.request(PHASE_VERIFY, gate_summary)
         if not decision.approved:
             summary = f"stop-gate denied verification ({decision.reason})"
             self._audit.record("result", summary)
@@ -401,37 +401,47 @@ class Orchestrator:
         error, it gets the same treatment as review — including the budget
         living here, in the loop, so an injected tracker cannot spin it either.
         """
-        budget = min(self._tracker.max_attempts, MAX_TOTAL_ATTEMPTS)
-        attempts = 0
-        last = ""
-        while attempts < budget:
-            try:
-                return self._verifier.verify(findings, diff, approval)
-            except (VerifyParseError, EmptyCompletionError) as exc:
-                # A blank adjudication is a failed attempt, symmetric with the
-                # review loop — it used to cross this loop untouched and crash the
-                # run. The failure-class map is NOT consulted here: chunk-diff is a
-                # review strategy with no verify equivalent, so verify widens only
-                # for the empty completion and any other exception propagates,
-                # exactly as before.
-                attempts += 1
-                last = str(exc)
-                outcome = self._record_failure(VERIFY_SUBTASK, VERIFY_STRATEGY)
-                if outcome.must_class_jump:
-                    break
-        reason = (
-            STOP_TOTAL_CAP
-            if self._tracker.max_attempts > MAX_TOTAL_ATTEMPTS
-            else STOP_TRACKER_BUDGET
-        )
-        self._audit.record(
-            "anti_loop",
-            f"verify: no usable adjudication after {attempts} attempt(s) ({last})",
-            stop_reason=reason,
-            attempts=attempts,
-            budget=budget,
-        )
-        return None
+        # The approval authorises this phase once. Every exit spends it on the
+        # way past — a usable adjudication, an exhausted budget, or an exception
+        # leaving through here. `finally`, not a line after the return: a crash
+        # inside verify must not leak a live token, the same discipline that
+        # keeps `run` from ever exiting without a trail. Consuming here, not in
+        # `verify()`, is deliberate: `verify()` is retried within the one phase,
+        # and each retry is the same authorised action, not a fresh one.
+        try:
+            budget = min(self._tracker.max_attempts, MAX_TOTAL_ATTEMPTS)
+            attempts = 0
+            last = ""
+            while attempts < budget:
+                try:
+                    return self._verifier.verify(findings, diff, approval)
+                except (VerifyParseError, EmptyCompletionError) as exc:
+                    # A blank adjudication is a failed attempt, symmetric with the
+                    # review loop — it used to cross this loop untouched and crash
+                    # the run. The failure-class map is NOT consulted here:
+                    # chunk-diff is a review strategy with no verify equivalent, so
+                    # verify widens only for the empty completion and any other
+                    # exception propagates, exactly as before.
+                    attempts += 1
+                    last = str(exc)
+                    outcome = self._record_failure(VERIFY_SUBTASK, VERIFY_STRATEGY)
+                    if outcome.must_class_jump:
+                        break
+            reason = (
+                STOP_TOTAL_CAP
+                if self._tracker.max_attempts > MAX_TOTAL_ATTEMPTS
+                else STOP_TRACKER_BUDGET
+            )
+            self._audit.record(
+                "anti_loop",
+                f"verify: no usable adjudication after {attempts} attempt(s) ({last})",
+                stop_reason=reason,
+                attempts=attempts,
+                budget=budget,
+            )
+            return None
+        finally:
+            consume_approval(approval)
 
     def _record_failure(self, subtask_id: str, strategy: str) -> AttemptOutcome:
         """Record a failed attempt and check the verdict was really minted.

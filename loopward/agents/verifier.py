@@ -24,7 +24,13 @@ from dataclasses import dataclass, field
 
 from loopward.agents.reviewer import DIFF_IS_DATA, Finding
 from loopward.engine.llm_wrapper import TASK_VERIFY, LLMClient, Message
-from loopward.engine.stop_gate import Approval, is_genuine_approval
+from loopward.engine.stop_gate import Approval, is_consumed_approval, is_genuine_approval
+
+#: The phase an Approval must have been minted for to drive verification. The
+#: orchestrator mints its verify-gate approval with this same constant, so the
+#: label the gate stamps on the token and the label ``verify`` demands cannot
+#: drift apart into two spellings of "the verify phase".
+PHASE_VERIFY = "verify"
 
 #: One adjudication per line, anchored at the start of it. A verdict mentioned
 #: mid-sentence ("I would never REJECT 2") is commentary, not a decision.
@@ -110,6 +116,13 @@ class Verifier:
         is a ``TypeError`` (missing arg) and passing a forged token is rejected
         below.
 
+        The token authorises one phase, once. Three separate rejections, each
+        naming its own cause: a token we never minted (forged/subclassed), a
+        genuine token already spent (replay), and a genuine token minted for a
+        different phase (a ``review`` approval cannot drive a verify). The last
+        two are what stops "the human approved something, once" from being read
+        as "the human approved this, any number of times".
+
         Raises :class:`VerifyParseError` if the model's answer does not adjudicate
         every finding exactly once.
         """
@@ -117,6 +130,17 @@ class Verifier:
             raise TypeError(
                 "verify() requires a genuine Approval minted by StopGate.request(); "
                 "a missing, forged, or subclassed token is rejected"
+            )
+        if is_consumed_approval(approval):
+            raise TypeError(
+                "verify() received a genuine Approval that was already consumed; a "
+                "stop-gate approval authorises one phase once, and this one is spent"
+            )
+        if approval.phase != PHASE_VERIFY:
+            raise TypeError(
+                f"verify() received a genuine Approval minted for phase "
+                f"{approval.phase!r}, not {PHASE_VERIFY!r}; an approval authorises "
+                f"only the phase it was requested for"
             )
         if not findings:
             return VerifyResult()

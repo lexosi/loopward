@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from loopward.agents.reviewer import STRATEGIES
+from loopward.agents.reviewer import STRATEGIES, Finding
 from loopward.engine import anti_loop as anti_loop_mod
 from loopward.engine import orchestrator as orch_mod
 from loopward.engine.anti_loop import AttemptTracker
@@ -17,7 +17,7 @@ from loopward.engine.orchestrator import (
     STATUS_OK,
     Orchestrator,
 )
-from loopward.engine.stop_gate import StopGate
+from loopward.engine.stop_gate import StopGate, is_consumed_approval
 
 DIFF = "return now <= self.expires_at"
 
@@ -442,3 +442,52 @@ def test_no_class_jump_is_announced_without_a_strategy_to_jump_to(tmp_path):
     )
     # The verdict that ended the run is still on the record.
     assert [e for e in audit.events if e.kind == "attempt" and "class-jump required" in e.message]
+
+
+# --- the verify phase always consumes its approval, on every exit ------------
+# Sibling of the trail rule: as no exit of `run` skips writing the trail, no
+# exit of the verify phase leaves its approval live. The token authorises the
+# phase once; a phase that concluded — success, exhaustion, or crash — spends it.
+
+
+def _one_finding() -> list[Finding]:
+    return [Finding(severity="HIGH", message="token expiry uses <=")]
+
+
+@pytest.mark.unit
+def test_verify_phase_consumes_the_approval_on_success(tmp_path):
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: _reply(m, task))
+    orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path))
+    approval = StopGate(mode="auto").request("verify", "s").approval
+    orch._verify_with_anti_loop(_one_finding(), DIFF, approval)
+    assert is_consumed_approval(approval) is True
+
+
+@pytest.mark.unit
+def test_verify_phase_consumes_the_approval_on_exhaustion(tmp_path):
+    # The adjudication is never usable, so the loop exhausts and returns None.
+    def reply(_messages: list[Message], task: str | None) -> str:
+        return "no adjudication here" if task == TASK_VERIFY else "HIGH: x"
+
+    llm = LLMClient(provider="fake", fake_script=reply)
+    orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path))
+    approval = StopGate(mode="auto").request("verify", "s").approval
+    assert orch._verify_with_anti_loop(_one_finding(), DIFF, approval) is None
+    assert is_consumed_approval(approval) is True
+
+
+@pytest.mark.unit
+def test_verify_phase_consumes_the_approval_even_on_crash(tmp_path):
+    # finally, not after-return: an exception inside verify must not leak a live
+    # token. A non-retryable error propagates past the anti-loop's except clause.
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: _reply(m, task))
+    orch = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path))
+    approval = StopGate(mode="auto").request("verify", "s").approval
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("verify exploded")
+
+    orch._verifier.verify = boom
+    with pytest.raises(RuntimeError, match="verify exploded"):
+        orch._verify_with_anti_loop(_one_finding(), DIFF, approval)
+    assert is_consumed_approval(approval) is True

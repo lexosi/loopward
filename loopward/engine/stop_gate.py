@@ -41,6 +41,13 @@ DENY = "deny"
 
 _MINT = object()  # module-private token; only this module can mint an Approval
 _MINTED: WeakSet[Approval] = WeakSet()  # identity registry of genuine Approvals
+#: Genuine Approvals that have been spent. A sibling of ``_MINTED``, and
+#: deliberately not the same set: consuming a token does not un-mint it, so
+#: ``is_genuine_approval`` keeps meaning "minted by us" and its "did not mint"
+#: rejection never lands on a token we did mint. The "spent" bit lives here, at
+#: module level, for the same reason "genuine" does — never on the object, whose
+#: immutability (``__setattr__`` blocked) the no-evasion tests pin.
+_CONSUMED: WeakSet[Approval] = WeakSet()
 
 #: Environment variable a caller can set to declare who is deciding, e.g.
 #: ``LOOPWARD_APPROVER=ci:github-actions``.
@@ -100,9 +107,11 @@ class Approval:
 
     Note: genuineness is checked by *identity*, not field value. ``__setattr__``
     blocks casual mutation, but a caller with direct ``object.__setattr__`` access
-    could still mutate ``phase`` in place — that is outside the guarantee and
-    harmless, since ``phase`` feeds no security decision (it is a label used only
-    in ``__repr__``); the identity-registry check is unaffected.
+    could still mutate ``phase`` in place. ``phase`` now feeds one decision — the
+    phase-binding check in ``Verifier.verify`` — so that direct-mutation route can
+    defeat the binding on a genuine token; it is the same out-of-scope hole as a
+    caller minting its own approval. The identity-registry check and single-use
+    (whose spent bit lives in ``_CONSUMED``, off the object) are both unaffected.
     """
 
     __slots__ = ("phase", "__weakref__")
@@ -141,6 +150,36 @@ def is_genuine_approval(approval: object) -> bool:
     """
     try:
         return approval in _MINTED
+    except TypeError:
+        return False
+
+
+def consume_approval(approval: object) -> None:
+    """Spend a genuine Approval, so no later use of it is honoured.
+
+    Idempotent, and a no-op on anything that is not a genuine Approval: the
+    genuineness gate is :func:`is_genuine_approval` and its callers already run
+    it, so spending a forged or already-dead token need not raise here. Called
+    once per gated phase, when the phase concludes — whatever the outcome — by
+    the code that drove the phase, never by the token's consumer, because the
+    consumer may legitimately be retried within the one phase (see the
+    orchestrator's verify loop).
+
+    Consuming does not remove the token from ``_MINTED``: spent and never-minted
+    are different facts with different rejections. This records only the first.
+    """
+    if is_genuine_approval(approval):
+        _CONSUMED.add(approval)  # type: ignore[arg-type]  # narrowed by is_genuine_approval
+
+
+def is_consumed_approval(approval: object) -> bool:
+    """True for a genuine Approval that :func:`consume_approval` has spent.
+
+    Independent of :func:`is_genuine_approval`: a spent token is still genuine.
+    Non-weakref-able / unhashable inputs (e.g. ``None``) return False cleanly.
+    """
+    try:
+        return approval in _CONSUMED
     except TypeError:
         return False
 

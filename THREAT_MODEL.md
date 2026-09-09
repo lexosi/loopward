@@ -19,17 +19,24 @@ do — they run in the tool boundary, not in the agent's runtime. loopward is
 the in-process half of that lesson.
 
 **Known gaps, stated rather than hidden:**
-- `Approval` is not single-use and is not bound to a phase; one approval
-  authorises repeated verifications.
+- `Approval` is single-use and phase-bound, both as composition-error guards,
+  not defences against a hostile caller. A genuine token is spent when its
+  phase concludes — recorded in a module-level `_CONSUMED` registry, sibling of
+  `_MINTED` — so a replayed token is refused; and `verify()` refuses a token
+  minted for another phase. Neither closes the in-process mint above: a caller
+  can still mint a fresh `verify` approval and spend it once.
 - The real bound on retries is the orchestrator's bounded loop, not the
   `AttemptOutcome` token. The orchestrator does check that a verdict was minted
   by the tracker before acting on it, which catches a hand-rolled tracker
   returning a duck-typed stand-in — the composition error above, not a bound.
 - `AttemptOutcome` is mutable in place. `object.__setattr__(outcome, "action",
   "class_jump")` flips `must_class_jump` on a genuine, registered outcome and
-  `is_genuine_outcome()` still returns True. `Approval` has the same hole, but
-  there the mutable field is `phase`, which decides nothing; here `action` is
-  the decision. The loop's budget is what makes it survivable.
+  `is_genuine_outcome()` still returns True. `Approval` has the same hole, and
+  `phase` now feeds one decision — the phase-binding check — so
+  `object.__setattr__(approval, "phase", "verify")` defeats that binding on a
+  genuine token by the same direct-mutation route. Single-use survives it: the
+  spent bit lives in `_CONSUMED`, off the object. Here `action` is the retry
+  decision, and the loop's budget is what makes that case survivable.
 - `AttemptOutcome` can also be *constructed* outside the tracker, by two routes
   that defeat the mint check in different ways. `dataclasses.replace(outcome,
   action="class_jump")` satisfies it — `replace` re-runs `__init__` and carries

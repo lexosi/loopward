@@ -16,7 +16,13 @@ from loopward.engine.anti_loop import (
     is_genuine_outcome,
 )
 from loopward.engine.llm_wrapper import LLMClient
-from loopward.engine.stop_gate import Approval, StopGate, is_genuine_approval
+from loopward.engine.stop_gate import (
+    Approval,
+    StopGate,
+    consume_approval,
+    is_consumed_approval,
+    is_genuine_approval,
+)
 
 
 def _verifier() -> Verifier:
@@ -164,3 +170,48 @@ def test_genuine_outcome_is_genuine():
     for _ in range(3):
         outcome = tracker.record_failure("sub", strategy="regex")
     assert is_genuine_outcome(outcome) is True
+
+
+# ---- F1b: an Approval is single-use and phase-bound -------------------------
+# A genuine token is not a blank cheque. "The human approved" must mean "the
+# human approved THIS phase, once" — not "some phase, any number of times".
+# Two independent holes closed here: replay (spend the same token twice) and
+# cross-phase reuse (a token minted for one phase driving another).
+
+
+@pytest.mark.unit
+def test_consumed_approval_is_rejected_by_verify():
+    # First use is legitimate; once the phase is concluded the token is spent
+    # and a replay is refused.
+    decision = StopGate(mode="auto").request("verify", "s")
+    verifier = _verifier()
+    assert verifier.verify(_findings(), DIFF, decision.approval).confirmed
+    consume_approval(decision.approval)  # phase concluded
+    with pytest.raises(TypeError):
+        verifier.verify(_findings(), DIFF, decision.approval)
+
+
+@pytest.mark.unit
+def test_consumed_approval_is_still_genuine():
+    # Spent is not the same as never-minted. is_genuine_approval must keep
+    # meaning "minted by us" — otherwise the "did not mint" rejection would
+    # state something false about a token we did mint. Two failures, two causes.
+    decision = StopGate(mode="auto").request("verify", "s")
+    consume_approval(decision.approval)
+    assert is_genuine_approval(decision.approval) is True
+    assert is_consumed_approval(decision.approval) is True
+
+
+@pytest.mark.unit
+def test_fresh_approval_is_not_consumed():
+    decision = StopGate(mode="auto").request("verify", "s")
+    assert is_consumed_approval(decision.approval) is False
+
+
+@pytest.mark.unit
+def test_approval_for_a_different_phase_is_rejected_by_verify():
+    # Genuine, unconsumed — but minted for 'review', not 'verify'.
+    review_token = StopGate(mode="auto").request("review", "s").approval
+    assert is_genuine_approval(review_token) is True
+    with pytest.raises(TypeError):
+        _verifier().verify(_findings(), DIFF, review_token)

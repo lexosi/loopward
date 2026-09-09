@@ -106,7 +106,9 @@ by `isinstance`. Every forgery path is closed within the threat model:
 
 - calling `verify()` with no approval → `TypeError`;
 - a hand-built `Approval(...)`, a subclass, or an `object.__new__(Approval)`
-  instance → rejected (not in the registry / subclassing raises).
+  instance → rejected (not in the registry / subclassing raises);
+- a genuine token replayed after its phase concluded, or one minted for a
+  different phase → `TypeError`: an approval authorises one phase, once.
 
 The anti-loop's hard bound is the orchestrator's bounded loop — a budget computed
 before the loop runs, which no injected collaborator can make unbounded or push
