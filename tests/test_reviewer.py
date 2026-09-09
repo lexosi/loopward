@@ -27,6 +27,7 @@ from loopward.agents.reviewer import (
     STRATEGIES,
     Reviewer,
     ReviewParseError,
+    UnknownStrategyError,
     parse_findings,
     scan_findings,
 )
@@ -155,10 +156,24 @@ def test_the_two_strategies_are_not_the_same_prompt():
 
 @pytest.mark.unit
 def test_default_strategy_is_the_first_one_and_is_a_real_strategy():
+    # STRATEGIES[0] is the strategy a review starts on. It has to be a real,
+    # prompt-backed strategy — that half is unchanged. What used to sit here too,
+    # that an unknown strategy silently borrowed this same wording, is gone: an
+    # unknown strategy is now rejected (see the test below), not resolved.
     assert STRATEGIES[0] == "concise"
+    assert "concise" in _STRATEGY_INSTRUCTIONS
     llm = LLMClient(provider="fake", fake_script=lambda m, task: "HIGH: x")
     default = Reviewer(llm).build_messages("diff", "concise")
-    unknown = Reviewer(llm).build_messages("diff", "no-such-strategy")
-    # The unknown-strategy fallback resolves to the default, so the default's
-    # wording is what an unrecognised strategy silently gets.
-    assert default[0]["content"] == unknown[0]["content"]
+    assert _STRATEGY_INSTRUCTIONS["concise"] in default[0]["content"]
+
+
+@pytest.mark.unit
+def test_an_unknown_strategy_is_rejected_with_its_name_not_silently_resolved():
+    # The reviewer builds no prompt for a strategy it does not know. It raises,
+    # and the cause names the missing strategy, so an unbuilt class-jump
+    # destination cannot slip through as 'concise' and have the trail record a
+    # jump that never happened.
+    llm = LLMClient(provider="fake", fake_script=lambda m, task: "HIGH: x")
+    with pytest.raises(UnknownStrategyError) as exc_info:
+        Reviewer(llm).build_messages("diff", "no-such-strategy")
+    assert "no-such-strategy" in str(exc_info.value)

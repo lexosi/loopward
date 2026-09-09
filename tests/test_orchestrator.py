@@ -205,11 +205,19 @@ def test_injected_tracker_cannot_spin(tmp_path):
 
 @pytest.mark.integration
 def test_injected_strategies_cannot_spin(tmp_path):
-    """Same defect, the other multiplier: the default tracker is untouched here."""
+    """Same defect, the other multiplier: the default tracker is untouched here.
+
+    The list is real strategies, repeated — the cap counts how many there are,
+    not whether the names differ. It used to inject invented names ('s0', 's1',
+    ...), which only ran at all because the reviewer resolved an unknown strategy
+    to 'concise' in silence: a guard that leaned on the very defect it guarded.
+    With that fallback gone, an unknown strategy is rejected, so the huge list
+    must be built from strategies the reviewer actually knows.
+    """
     reply, calls = _never_parses()
     llm = LLMClient(provider="fake", fake_script=reply)
     result = Orchestrator(llm, StopGate(mode="auto"), audit=_audit(tmp_path),
-                          strategies=tuple(f"s{i}" for i in range(10**6))).run(DIFF)
+                          strategies=STRATEGIES * (10**6)).run(DIFF)
     assert result.status == STATUS_EXHAUSTED
     assert calls["n"] <= orch_mod.MAX_TOTAL_ATTEMPTS
 

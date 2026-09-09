@@ -94,32 +94,30 @@ def test_chunk_diff_destination_is_a_tripwire_not_a_built_strategy():
 
 
 @pytest.mark.unit
-def test_known_defect_unknown_strategy_silently_resolves_to_concise():
-    """CHARACTERIZATION of a KNOWN DEFECT — pinning current behaviour, not blessing it.
+def test_the_unbuilt_destination_is_rejected_with_cause_not_run_as_concise():
+    """The map's destination is declared but not built — so asking for it must fail loud.
 
-    ``reviewer.build_messages`` resolves an unknown strategy to 'concise' via
-    ``_STRATEGY_INSTRUCTIONS.get(strategy, default)`` with NO signal. So the
-    map's declared-but-unbuilt destination, if wired into the review loop as it
-    stands, would silently run as 'concise' and the trail would record a
-    class-jump that did not happen. This test makes the defect visible in the
-    suite rather than only in a report.
+    ``reviewer.build_messages`` once resolved an unknown strategy to 'concise'
+    via ``_STRATEGY_INSTRUCTIONS.get(strategy, default)`` with NO signal. That
+    was the danger this map poses: wire the declared-but-unbuilt destination into
+    the review loop and it would silently run as 'concise' while the trail
+    recorded a class-jump that did not happen — a certificate over nothing.
 
-    It is NOT the desired contract. The fix (reviewer rejecting an unknown
-    strategy) belongs to unit 3: it changes observable behaviour and reverses a
-    deliberate design, and unit 2 has a zero-observable-change contract. Fixing
-    it also touches the pinned ``test_reviewer.py::test_default_strategy_is_the_
-    first_one_and_is_a_real_strategy``, which asserts this same silent fallback.
+    That is closed upstream of the wiring. The reviewer now raises
+    ``UnknownStrategyError`` for a strategy it has no prompt for, and the cause
+    names the missing strategy. So the destination cannot be resolved to concise
+    behind the trail's back: it fails, with the unbuilt strategy named.
     """
-    from loopward.agents.reviewer import Reviewer
+    from loopward.agents.reviewer import Reviewer, UnknownStrategyError
 
     llm = LLMClient(provider="fake", fake_script=lambda m, task: "HIGH: x")
     reviewer = Reviewer(llm)
     destination = NEXT_STRATEGY[CONTEXT_LENGTH_EXCEEDED]
 
-    silent = reviewer.build_messages("diff", destination)
-    concise = reviewer.build_messages("diff", "concise")
-    # DEFECT: indistinguishable. The unbuilt destination silently becomes concise.
-    assert silent[0]["content"] == concise[0]["content"]
+    with pytest.raises(UnknownStrategyError) as exc_info:
+        reviewer.build_messages("diff", destination)
+    # The cause names the strategy that has no prompt, not a silent concise.
+    assert destination in str(exc_info.value)
 
 
 # --- the one measured signal classifies; everything else is UNKNOWN ---------

@@ -80,6 +80,25 @@ class ReviewParseError(ValueError):
     """Raised when the model output contains no parseable findings."""
 
 
+class UnknownStrategyError(ValueError):
+    """Raised when a review is asked for a strategy that has no prompt.
+
+    The reviewer builds no prompt for a strategy it does not recognise. It says
+    so, naming the strategy, rather than borrowing another strategy's wording —
+    a class-jump to a declared-but-unbuilt destination has to fail here, loudly,
+    not run as some other strategy while the trail records a jump that did not
+    happen.
+    """
+
+    def __init__(self, strategy: str) -> None:
+        self.strategy = strategy
+        known = ", ".join(STRATEGIES)
+        super().__init__(
+            f"unknown review strategy {strategy!r}: no prompt is built for it. "
+            f"Known strategies: {known}."
+        )
+
+
 @dataclass(frozen=True)
 class Finding:
     """One review finding."""
@@ -126,7 +145,10 @@ class Reviewer:
         self._llm = llm
 
     def build_messages(self, diff: str, strategy: str) -> list[Message]:
-        instruction = _STRATEGY_INSTRUCTIONS.get(strategy, _STRATEGY_INSTRUCTIONS["concise"])
+        try:
+            instruction = _STRATEGY_INSTRUCTIONS[strategy]
+        except KeyError:
+            raise UnknownStrategyError(strategy) from None
         return [
             {"role": "system", "content": f"{instruction}\n{DIFF_IS_DATA}"},
             {"role": "user", "content": f"Review this diff:\n\n<diff>\n{diff}\n</diff>"},
